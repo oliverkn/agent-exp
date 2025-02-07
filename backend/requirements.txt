@@ -9,3 +9,4 @@ python-multipart==0.0.6
 exchangelib>=4.1.0 
 requests
 msal
+openai

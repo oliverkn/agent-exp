@@ -13,6 +13,9 @@ class ToolBox:
     def add_tool(self, tool):
         self.tools[tool.tool_name] = tool
         
+    def get_tools(self):
+        return list(self.tools.values())
+        
     def call(self, tool_name, args):
         try:
             if tool_name not in self.tools:
@@ -27,6 +30,20 @@ class ToolBox:
         except Exception as e:
             return {"error": str(e)}
             
+class UserInput:
+    class Args(BaseModel):
+        message_to_user: str
+    
+    args_model = Args
+    tool_name = "ask_user_for_input"
+    tool_description = "This tool is used to get user input."
+    
+    def run(self, args: Args, global_state: dict):
+        
+        print(args.message_to_user)
+        user_input = input()
+        
+        return user_input
 
 class SetupMSGraph:
     class Args(BaseModel):
@@ -114,64 +131,3 @@ class GetLatestEmail:
             return {"Error:", response.json()}
         
         return {"subject": emails[0]["subject"], "from": emails[0]["from"]["emailAddress"]["address"], "receivedDateTime": emails[0]["receivedDateTime"], "bodyPreview": emails[0]["bodyPreview"]}
-
-class EmailTool:
-    def __init__(self, client_id: str, tenant_id: str, email: str):
-        self.email = email
-        self.client_id = client_id
-        self.tenant_id = tenant_id
-        
-    
-    def authenticate(self):
-        # Microsoft Graph API endpoints
-        AUTHORITY = f"https://login.microsoftonline.com/{self.tenant_id}"
-        SCOPES = ["Mail.Read"]
-
-        # Initialize the MSAL client (Public Client)
-        app = msal.PublicClientApplication(self.client_id, authority=AUTHORITY)
-
-        # Start device authentication flow
-        device_flow = app.initiate_device_flow(scopes=SCOPES)
-        if "user_code" not in device_flow:
-            raise Exception("Failed to start device flow. Try again.")
-
-        # Show user instructions
-        print(f"Please sign in at: {device_flow['verification_uri']}")
-        print(f"Use this code: {device_flow['user_code']}")
-
-        # Continuously check if the user has signed in
-        print("\nWaiting for user to sign in...")
-        while True:
-            token_response = app.acquire_token_by_device_flow(device_flow)
-            
-            if "access_token" in token_response:
-                print("✅ Sign-in detected! Access token acquired.")
-                break
-            elif "error" in token_response and token_response["error"] == "authorization_pending":
-                time.sleep(5)  # Wait and retry
-            else:
-                raise Exception(f"Authentication failed: {token_response}")
-            
-        self.access_token = token_response["access_token"]
-        
-        return True
-
-    def get_latest_email(self) -> Optional[dict]:
-        headers = {"Authorization": f"Bearer {self.access_token}"}
-        GRAPH_API_URL = "https://graph.microsoft.com/v1.0/me/messages"
-
-        response = requests.get(GRAPH_API_URL, headers=headers)
-
-        # Display emails
-        if response.status_code == 200:
-            emails = response.json().get("value", [])
-            for i, email in enumerate(emails[:5]):  # Show first 5 emails
-                print(f"\nEmail {i+1}:")
-                print(f"Subject: {email['subject']}")
-                print(f"From: {email['from']['emailAddress']['address']}")
-                print(f"Received: {email['receivedDateTime']}")
-                print(f"Preview: {email['bodyPreview']}\n")
-        else:
-            print("Error:", response.json())
-            
-    
