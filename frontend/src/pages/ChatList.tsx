@@ -27,6 +27,7 @@ const ChatList: React.FC = () => {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     fetchChats();
@@ -36,8 +37,55 @@ const ChatList: React.FC = () => {
     if (selectedChatId) {
       fetchChat(selectedChatId);
       fetchMessages(selectedChatId);
+      connectWebSocket();
     }
+
+    return () => {
+      // Cleanup WebSocket connection when chat changes
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
   }, [selectedChatId]);
+
+  const connectWebSocket = () => {
+    if (!selectedChatId || wsRef.current?.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    console.log(`Attempting to connect to WebSocket for chat ${selectedChatId}`);
+    const ws = new WebSocket(`ws://localhost:8000/api/ws/${selectedChatId}`);
+
+    ws.onopen = () => {
+      console.log(`WebSocket Connected for chat ${selectedChatId}`);
+      setError(null); // Clear any previous connection errors
+    };
+
+    ws.onmessage = (event) => {
+      console.log('Received message:', event.data);
+      try {
+        const message = JSON.parse(event.data);
+        setMessages(prev => [...prev, message]);
+      } catch (e) {
+        console.error('Error parsing message:', e);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setError('Connection error. Messages may not be real-time.');
+    };
+
+    ws.onclose = (event) => {
+      console.log(`WebSocket disconnected for chat ${selectedChatId}. Code: ${event.code}, Reason: ${event.reason}`);
+      // Only attempt to reconnect if the connection was previously established
+      if (event.code !== 4004) { // 4004 is our custom code for "Chat not found"
+        setTimeout(connectWebSocket, 3000);
+      }
+    };
+
+    wsRef.current = ws;
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -114,25 +162,18 @@ const ChatList: React.FC = () => {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || sendingMessage || !selectedChatId) return;
+    if (!newMessage.trim() || sendingMessage || !wsRef.current || !selectedChatId) return;
 
     setSendingMessage(true);
     setError(null);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/chats/${selectedChatId}/messages/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ content: newMessage }),
-      });
-
-      if (response.ok) {
-        const message = await response.json();
-        setMessages(prev => [...prev, { ...message, is_user: true }]);
-        setNewMessage('');
-      }
+      // Send message through WebSocket
+      wsRef.current.send(JSON.stringify({
+        content: newMessage
+      }));
+      
+      setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
       setError('Failed to send message');

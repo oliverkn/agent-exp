@@ -12,6 +12,7 @@ class Message(MessageBase):
     id: int
     chat_id: int
     created_at: datetime
+    sender: str
 
     class Config:
         from_attributes = True

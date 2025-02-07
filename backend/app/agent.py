@@ -3,7 +3,7 @@ import json
 import pydantic
 
 
-from tools import *
+from .tools import *
 
 
 class Agent:
@@ -14,7 +14,7 @@ class Agent:
 
         self.client = OpenAI(api_key="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")
 
-    def run(self):
+    async def run(self):
         
         messages = []
         messages.append({"role": "developer", "content": [{"type" : "text", "text" : "Your task is to get the latest email by using the available tools."}]})
@@ -42,12 +42,15 @@ class Agent:
             # print(response)
             messages.append(response)
             
+            
+            
             for tool_call in completion.choices[0].message.tool_calls:
                 name = tool_call.function.name
                 args = tool_call.function.arguments
 
                 print(f"{name}({args})")
-                result = tool_box.call(name, args)
+                yield f"{name}({args})"
+                result = await self.tool_box.call(name, args)
                 print(result)
                 
                 messages.append({
@@ -56,7 +59,7 @@ class Agent:
                     "content": json.dumps(result)
                 })
         
-        pass
+        
 
 def to_function_schema(tool):    
     return {
@@ -74,11 +77,13 @@ def to_function_schema(tool):
         }
     
 tool_box = ToolBox()
-tool_box.add_tool(UserInput())
+tool_box.add_tool(UserInputCMD())
 tool_box.add_tool(SetupMSGraph())
 tool_box.add_tool(AuthenticateMSGraph())
 tool_box.add_tool(GetLatestEmail())
 
-agent = Agent(tool_box, "gpt-4o-mini")
+agent = Agent(tool_box, "gpt-4o-mini")    
 
-agent.run()
+if __name__ == "__main__":
+    for step in agent.run():
+        print(step)

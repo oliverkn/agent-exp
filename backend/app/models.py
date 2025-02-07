@@ -21,6 +21,7 @@ class Message(Base):
     content = Column(Text, nullable=False)
     chat_id = Column(Integer, ForeignKey("chats.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    sender = Column(String(50), nullable=False, default="user")
 
     # Relationship with chat
     chat = relationship("Chat", back_populates="messages") 

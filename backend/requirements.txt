@@ -10,3 +10,4 @@ exchangelib>=4.1.0
 requests
 msal
 openai
+websockets

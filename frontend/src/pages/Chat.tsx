@@ -6,7 +6,8 @@ interface Message {
   content: string;
   chat_id: number;
   created_at: string;
-  is_user: boolean;
+  sender: string;
+  timestamp?: string;
 }
 
 interface Chat {
@@ -26,6 +27,7 @@ const ChatPage: React.FC = () => {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -39,8 +41,52 @@ const ChatPage: React.FC = () => {
     if (chatId) {
       fetchChat();
       fetchMessages();
+      connectWebSocket();
     }
+
+    return () => {
+      // Cleanup WebSocket connection when component unmounts
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
   }, [chatId]);
+
+  const connectWebSocket = () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    const ws = new WebSocket(`ws://localhost:8000/api/ws/${chatId}`);
+
+    ws.onopen = () => {
+      console.log('WebSocket Connected');
+    };
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      setMessages(prev => [...prev, {
+        id: message.id,
+        content: message.content,
+        chat_id: message.chat_id,
+        created_at: message.timestamp,
+        sender: message.sender
+      }]);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setError('Connection error. Messages may not be real-time.');
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      // Attempt to reconnect after a delay
+      setTimeout(connectWebSocket, 3000);
+    };
+
+    wsRef.current = ws;
+  };
 
   const fetchChat = async () => {
     try {
@@ -96,27 +142,19 @@ const ChatPage: React.FC = () => {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || sendingMessage) return;
+    if (!newMessage.trim() || sendingMessage || !wsRef.current) return;
 
     setSendingMessage(true);
     setError(null);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/chats/${chatId}/messages/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ content: newMessage }),
-      });
-
-      if (response.ok) {
-        const message = await response.json();
-        setMessages(prev => [...prev, { ...message, is_user: true }]);
-        setNewMessage('');
-      } else {
-        throw new Error('Failed to send message');
-      }
+      // Send message through WebSocket
+      wsRef.current.send(JSON.stringify({
+        content: newMessage,
+        sender: 'user' // You might want to get this from user context/auth
+      }));
+      
+      setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
       setError('Failed to send message. Please try again.');
@@ -147,17 +185,17 @@ const ChatPage: React.FC = () => {
           <div key={message.id} className="flex items-start space-x-3">
             <div 
               className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                message.is_user 
+                message.sender === 'user'
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-500 text-white'
               }`}
             >
-              {message.is_user ? 'U' : 'A'}
+              {message.sender === 'user' ? 'U' : 'A'}
             </div>
             <div className="flex-1">
               <p className="text-gray-800 break-words">{message.content}</p>
               <span className="text-xs text-gray-500 block mt-1">
-                {formatTimestamp(message.created_at)}
+                {formatTimestamp(message.created_at || message.timestamp || '')}
               </span>
             </div>
           </div>
