@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
+import asyncio
 
 class ToolBox:
     def __init__(self):
@@ -16,7 +17,7 @@ class ToolBox:
     def get_tools(self):
         return list(self.tools.values())
         
-    def call(self, tool_name, args):
+    async def call(self, tool_name, args):
         try:
             if tool_name not in self.tools:
                 raise Exception(f"Tool {tool_name} not found")
@@ -25,12 +26,12 @@ class ToolBox:
             
             args = tool.args_model.model_validate_json(args)
             
-            return tool.run(args, self.global_state)
+            return await tool.run(args, self.global_state)
         
         except Exception as e:
             return {"error": str(e)}
             
-class UserInput:
+class UserInputCMD:
     class Args(BaseModel):
         message_to_user: str
     
@@ -38,12 +39,28 @@ class UserInput:
     tool_name = "ask_user_for_input"
     tool_description = "This tool is used to get user input."
     
-    def run(self, args: Args, global_state: dict):
-        
+    async def run(self, args: Args, global_state: dict):
         print(args.message_to_user)
-        user_input = input()
+        return {"user_input": input()}
+    
+class UserInput:
+    class Args(BaseModel):
+        message_to_user: str
+    
+    def __init__(self, chat):
+        self.chat = chat
+    
+    args_model = Args
+    tool_name = "ask_user_for_input"
+    tool_description = "This tool is used to get user input."
+    
+    async def run(self, args: Args, global_state: dict):
+        # Send the question to the user
+        await self.chat.post_new_message(args.message_to_user, is_user=False)
         
-        return user_input
+        # Wait for user's response
+        response = await self.chat.wait_for_user_input()
+        return {"user_input": str(response)}
 
 class SetupMSGraph:
     class Args(BaseModel):
@@ -59,7 +76,7 @@ class SetupMSGraph:
     If you don't have a client_id, tenant_id, or email, ask the user for it."""
     
 
-    def run(self, args: Args, global_state: dict):
+    async def run(self, args: Args, global_state: dict):
         global_state["ms_graph.email"] = args.email
         global_state["ms_graph.client_id"] = args.client_id
         global_state["ms_graph.tenant_id"] = args.tenant_id
@@ -75,7 +92,7 @@ class AuthenticateMSGraph:
     tool_description = ""
     args_model = Args
 
-    def run(self, args: Args, global_state: dict):
+    async def run(self, args: Args, global_state: dict):
          # Microsoft Graph API endpoints
         AUTHORITY = f"https://login.microsoftonline.com/{global_state["ms_graph.tenant_id"]}"
         SCOPES = ["Mail.Read"]
@@ -118,7 +135,7 @@ class GetLatestEmail:
     tool_description = ""
     args_model = Args
     
-    def run(self, args: Args, global_state: dict):
+    async def run(self, args: Args, global_state: dict):
         headers = {"Authorization": f"Bearer {global_state['ms_graph.access_token']}"}
         GRAPH_API_URL = "https://graph.microsoft.com/v1.0/me/messages"
 
