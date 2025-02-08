@@ -31,6 +31,14 @@ class ToolBox:
         except Exception as e:
             return {"error": str(e)}
             
+    def get_state(self):
+        """Get the current state of the toolbox"""
+        return self.global_state
+    
+    def load_state(self, state: dict):
+        """Load a previously saved state"""
+        self.global_state = state
+
 class UserInputCMD:
     class Args(BaseModel):
         message_to_user: str
@@ -148,3 +156,17 @@ class GetLatestEmail:
             return {"Error:", response.json()}
         
         return {"subject": emails[0]["subject"], "from": emails[0]["from"]["emailAddress"]["address"], "receivedDateTime": emails[0]["receivedDateTime"], "bodyPreview": emails[0]["bodyPreview"]}
+
+def to_function_schema(tool):    
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.tool_name,
+            "description": tool.tool_description,
+            "parameters": {
+                "type": "object",
+                "properties": tool.args_model.model_json_schema()["properties"],
+                "required": list(tool.args_model.model_json_schema()["properties"].keys())
+            }
+        }
+    }

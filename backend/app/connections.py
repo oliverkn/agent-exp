@@ -62,5 +62,13 @@ class ConnectionManager:
             except:
                 pass
 
+    async def send_personal_message(self, message: dict, websocket: WebSocket):
+        try:
+            await websocket.send_json(message)
+            logger.info("Personal message sent successfully")
+        except Exception as e:
+            logger.error(f"Error sending personal message: {str(e)}")
+            raise
+
 # Create a single instance to be used across the application
 manager = ConnectionManager() 
