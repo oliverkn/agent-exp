@@ -47,20 +47,15 @@ class UserInput:
     class Args(BaseModel):
         message_to_user: str
     
-    def __init__(self, chat):
-        self.chat = chat
+    def __init__(self, input_function):
+        self.input_function = input_function
     
     args_model = Args
     tool_name = "ask_user_for_input"
     tool_description = "This tool is used to get user input."
     
     async def run(self, args: Args, global_state: dict):
-        # Send the question to the user
-        await self.chat.post_new_message(args.message_to_user, is_user=False)
-        
-        # Wait for user's response
-        response = await self.chat.wait_for_user_input()
-        return {"user_input": str(response)}
+        return {"user_input": self.input_function(args.message_to_user)}
 
 class SetupMSGraph:
     class Args(BaseModel):

@@ -1,7 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import ChatList from './pages/ChatList.tsx';
-import Chat from './pages/Chat.tsx';
+import Agents from './pages/Agents.tsx';
 
 function App() {
   return (
@@ -10,14 +9,13 @@ function App() {
         <nav className="bg-white shadow-sm mb-4">
           <div className="container mx-auto px-4 py-3">
             <Link to="/" className="text-xl font-semibold text-blue-600 hover:text-blue-800">
-              Chat Application
+              Agent Interface
             </Link>
           </div>
         </nav>
 
         <Routes>
-          <Route path="/" element={<ChatList />} />
-          <Route path="/chat/:chatId" element={<Chat />} />
+          <Route path="/" element={<Agents />} />
         </Routes>
       </div>
     </Router>

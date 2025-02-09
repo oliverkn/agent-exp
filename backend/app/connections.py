@@ -10,57 +10,28 @@ class ConnectionManager:
         self.active_connections: Dict[int, List[WebSocket]] = {}
         logger.info("ConnectionManager initialized")
 
-    async def connect(self, websocket: WebSocket, chat_id: int):
-        try:
-            await websocket.accept()
-            if chat_id not in self.active_connections:
-                self.active_connections[chat_id] = []
-            self.active_connections[chat_id].append(websocket)
-            logger.info(f"New WebSocket connection accepted for chat {chat_id}. Total connections for this chat: {len(self.active_connections[chat_id])}")
-        except Exception as e:
-            logger.error(f"Error accepting WebSocket connection for chat {chat_id}: {str(e)}")
-            try:
-                await websocket.close(code=4000, reason=str(e))
-            except:
-                pass  # Connection might already be closed
-            raise
+    async def connect(self, websocket: WebSocket, thread_id: int):
+        await websocket.accept()
+        if thread_id not in self.active_connections:
+            self.active_connections[thread_id] = []
+        self.active_connections[thread_id].append(websocket)
+        logger.info(f"Client connected to thread {thread_id}. Active connections: {len(self.active_connections[thread_id])}")
 
-    def disconnect(self, websocket: WebSocket, chat_id: int):
-        try:
-            if chat_id in self.active_connections:
+    def disconnect(self, websocket: WebSocket, thread_id: int):
+        if thread_id in self.active_connections:
+            self.active_connections[thread_id].remove(websocket)
+            if not self.active_connections[thread_id]:
+                del self.active_connections[thread_id]
+            logger.info(f"Client disconnected from thread {thread_id}. Remaining connections: {len(self.active_connections.get(thread_id, []))}")
+
+    async def broadcast_to_thread(self, message: dict, thread_id: int):
+        if thread_id in self.active_connections:
+            for connection in self.active_connections[thread_id]:
                 try:
-                    self.active_connections[chat_id].remove(websocket)
-                except ValueError:
-                    pass  # WebSocket was already removed
-                
-                if not self.active_connections[chat_id]:
-                    del self.active_connections[chat_id]
-                logger.info(f"WebSocket disconnected from chat {chat_id}. Remaining connections for this chat: {len(self.active_connections.get(chat_id, []))}")
-        except Exception as e:
-            logger.error(f"Error disconnecting WebSocket from chat {chat_id}: {str(e)}")
-
-    async def broadcast_to_chat(self, message: dict, chat_id: int):
-        if chat_id not in self.active_connections:
-            logger.warning(f"No active connections found for chat {chat_id}")
-            return
-            
-        logger.info(f"Broadcasting message to {len(self.active_connections[chat_id])} connections in chat {chat_id}")
-        dead_connections = []
-        
-        for connection in self.active_connections[chat_id]:
-            try:
-                await connection.send_json(message)
-                logger.info(f"Message sent successfully to a connection in chat {chat_id}")
-            except Exception as e:
-                logger.error(f"Error sending message to a connection in chat {chat_id}: {str(e)}")
-                dead_connections.append(connection)
-        
-        # Clean up dead connections
-        for dead_connection in dead_connections:
-            try:
-                self.disconnect(dead_connection, chat_id)
-            except:
-                pass
+                    await connection.send_json(message)
+                except Exception as e:
+                    logger.error(f"Error sending message to client: {str(e)}")
+                    await self.disconnect(connection, thread_id)
 
 # Create a single instance to be used across the application
 manager = ConnectionManager() 
