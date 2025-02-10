@@ -11,8 +11,7 @@ class Agent:
         self.tool_box = tool_box
         self.model = model
 
-
-        self.client = OpenAI(api_key="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")
+        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
     async def run(self):
         

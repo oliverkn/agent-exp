@@ -4,6 +4,7 @@ from typing import List
 import logging
 import asyncio
 import json
+import os
 
 from ..database import get_db
 from ..models import Thread
@@ -163,7 +164,7 @@ class Agent:
         self.tool_box.add_tool(GetLatestEmail())
         
         self.model = "gpt-4o-mini"
-        self.client = OpenAI(api_key="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")
+        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
         self.tools_schema = []
         for tool in self.tool_box.get_tools():

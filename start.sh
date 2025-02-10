@@ -20,6 +20,15 @@ fi
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
+# Source environment variables
+echo -e "${GREEN}Loading environment variables...${NC}"
+if [ -f .env ]; then
+    export $(cat .env | xargs)
+else
+    echo "Error: .env file not found"
+    exit 1
+fi
+
 # Kill any existing processes on ports 3000 and 8000
 echo -e "${GREEN}Cleaning up existing processes...${NC}"
 lsof -ti:3000 | xargs kill -9 2>/dev/null || true
