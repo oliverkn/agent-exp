@@ -1,8 +1,3 @@
-# Dependencies
-frontend/node_modules
-backend/venv/
-backend/.env
-
 # Python
 __pycache__/
 *.py[cod]
@@ -17,22 +12,16 @@ htmlcov/
 env/
 venv/
 ENV/
-*.pyc
-__pycache__/
-*.pyo
-*.pyd
+*.db
 
 # React/Node
+node_modules/
 frontend/build/
-frontend/.env
-frontend/.env.local
-frontend/.env.development.local
-frontend/.env.test.local
-frontend/.env.production.local
+frontend/coverage/
+frontend/.env*
 frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
-frontend/coverage/
 
 # IDEs and editors
 .idea/
@@ -41,4 +30,4 @@ frontend/coverage/
 *.swo
 .DS_Store
 Thumbs.db
-frontend/node_modules/.cache/default-development/2.pack
+

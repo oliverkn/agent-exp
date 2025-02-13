@@ -35,14 +35,16 @@ class Chat(ChatBase):
 class ThreadBase(BaseModel):
     title: Optional[str] = "New Thread"
 
-class ThreadCreate(ThreadBase):
-    pass
+class ThreadCreate(BaseModel):
+    title: str
 
-class Thread(ThreadBase):
+class Thread(BaseModel):
     id: int
+    title: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    messages: List[Message] = []
+    state: str
+    toolbox_state: str
 
     class Config:
         from_attributes = True 

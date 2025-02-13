@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from . import models, database
-from .services import agent
+from .services import agent_endpoint
+from .database import engine
+from .events import setup_db_events
 import logging
 
 # Configure logging
@@ -16,14 +18,17 @@ app.add_middleware(
     allow_origins=["http://localhost:3000"],  # React default port
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 # Create database tables
 models.Base.metadata.create_all(bind=database.engine)
 
-# Include the agent router without the /api prefix
-app.include_router(agent.router)
+# Setup database event listeners
+setup_db_events(engine)
+
+# Include the agent_endpoint router
+app.include_router(agent_endpoint.router)
 
 @app.get("/api/health")
 async def health_check():

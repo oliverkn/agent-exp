@@ -1,148 +1,111 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 
 interface Thread {
   id: number;
   title: string;
   created_at: string;
-  updated_at: string | null;
-  messages: Message[];
-}
-
-interface MessageContent {
-  type: string;
-  text: string;
 }
 
 interface Message {
+  id: number;
   role: 'assistant' | 'tool' | 'user' | 'developer';
-  content?: string | MessageContent[];
+  content?: string;
+  agent_state?: string;
+  created_at: string;
+  tool_name?: string;
   tool_call_id?: string;
-  tool_calls?: Array<{
-    function: {
-      name: string;
-      arguments: string;
-    };
-  }>;
-}
-
-interface WebSocketMessage {
-  type: 'assistant' | 'tool_result';
-  content?: string | null;
-  tool_calls?: Array<{
-    name: string;
-    arguments: string;
-  }>;
-  tool?: string;
-  result?: any;
+  tool_result?: string;
 }
 
 export default function Agents() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [newThreadTitle, setNewThreadTitle] = useState('');
-  const [userInput, setUserInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isStartingAgent, setIsStartingAgent] = useState(false);
-  const [isAgentRunning, setIsAgentRunning] = useState(false);
-  const [isSendingMessage, setIsSendingMessage] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [newMessage, setNewMessage] = useState('');
 
   const API_BASE_URL = 'http://localhost:8000';
-  const WS_BASE_URL = 'ws://localhost:8000';
 
   useEffect(() => {
     fetchThreads();
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
   }, []);
 
+  // Fetch messages when thread is selected
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages]);
-
-  // Add polling for thread updates
-  useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval>;
-
-    const fetchThreadUpdates = async () => {
-      if (!selectedThread) return;
-
-      try {
-        const response = await axios.get(`${API_BASE_URL}/api/threads/${selectedThread.id}/get_thread`, {
-          params: { from_sequence_number: 0 }
-        });
-        
-        setMessages(response.data.messages);
-        setIsAgentRunning(response.data.running);
-      } catch (error: any) {
-        console.error('Error fetching thread updates:', error);
-        // Don't show error to user since this is a background poll
-      }
-    };
-
     if (selectedThread) {
-      // Initial fetch
-      fetchThreadUpdates();
-      // Set up polling interval
-      intervalId = setInterval(fetchThreadUpdates, 1000);
+      fetchThreadMessages(selectedThread.id);
+    }
+  }, [selectedThread]);
+
+  useEffect(() => {
+    let ws: WebSocket;
+    
+    if (selectedThread) {
+        const wsUrl = API_BASE_URL.replace('http://', 'ws://');
+        console.log('Attempting to connect to WebSocket:', `${wsUrl}/ws/${selectedThread.id}`);
+        
+        try {
+            ws = new WebSocket(`${wsUrl}/ws/${selectedThread.id}`);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected successfully');
+            };
+            
+            ws.onmessage = async (event) => {
+                console.log('WebSocket message received:', event.data);
+                const data = JSON.parse(event.data);
+                if (data.type === 'message_update') {
+                    console.log('Message update received, fetching latest messages');
+                    await fetchThreadMessages(selectedThread.id);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+            
+            ws.onclose = (event) => {
+                console.log('WebSocket disconnected:', event.code, event.reason);
+            };
+        } catch (error) {
+            console.error('Error creating WebSocket connection:', error);
+        }
     }
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+        if (ws) {
+            console.log('Cleaning up WebSocket connection');
+            ws.close();
+        }
     };
   }, [selectedThread]);
-
-  const connectWebSocket = (threadId: number) => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-
-    const ws = new WebSocket(`${WS_BASE_URL}/ws/threads/${threadId}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      setMessages(prev => [...prev, message]);
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setError('WebSocket connection error');
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket disconnected');
-      wsRef.current = null;
-    };
-  };
 
   const fetchThreads = async () => {
     try {
       setIsLoading(true);
-      setError(null);
       const response = await axios.get(`${API_BASE_URL}/api/threads/list`);
-      console.log('Fetched threads:', response.data);
       setThreads(response.data);
-    } catch (error: any) {
+    } catch (error) {
+      setError('Failed to fetch threads');
       console.error('Error fetching threads:', error);
-      setError(error.response?.data?.detail || 'Failed to fetch threads. Please try again.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchThreadMessages = async (threadId: number) => {
+    try {
+        console.log('Fetching messages for thread:', threadId);
+        const response = await axios.get(
+            `${API_BASE_URL}/api/threads/${threadId}/get_thread_messages`
+        );
+        console.log('Received messages:', response.data);
+        setMessages(response.data);
+    } catch (error) {
+        console.error('Error fetching messages:', error);
     }
   };
 
@@ -154,162 +117,129 @@ export default function Agents() {
 
     try {
       setIsLoading(true);
-      setError(null);
-      console.log('Creating thread with title:', newThreadTitle);
       const response = await axios.post(`${API_BASE_URL}/api/threads/create`, {
         title: newThreadTitle
       });
-      console.log('Created thread:', response.data);
       setThreads(prevThreads => [response.data, ...prevThreads]);
       setNewThreadTitle('');
-    } catch (error: any) {
+    } catch (error) {
+      setError('Failed to create thread');
       console.error('Error creating thread:', error);
-      setError(error.response?.data?.detail || 'Failed to create thread. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleThreadSelect = (thread: Thread) => {
-    setSelectedThread(thread);
-    setMessages([]);
-    connectWebSocket(thread.id);
-  };
+  const sendMessage = async () => {
+    if (!selectedThread || !newMessage.trim()) return;
 
-  const startAgent = async () => {
-    if (!selectedThread) return;
-    
+    const messageContent = newMessage;
+    setNewMessage('');
+    setError(null); // Clear any previous errors
+
     try {
-      setIsStartingAgent(true);
-      setError(null);
-      const response = await axios.post(`${API_BASE_URL}/api/threads/${selectedThread.id}/start_agent_loop`);
-      console.log('Started agent for thread:', selectedThread.id);
-      if (response.data.status === "started") {
-        setIsAgentRunning(true);
-      }
+        const response = await axios.post(`${API_BASE_URL}/api/threads/${selectedThread.id}/message`, {
+            content: messageContent
+        });
+        
+        if (response.data.message) {
+            setMessages(prevMessages => [...prevMessages, response.data.message]);
+        }
     } catch (error: any) {
-      console.error('Error starting agent:', error);
-      setError(error.response?.data?.detail || 'Failed to start agent. Please try again.');
-    } finally {
-      setIsStartingAgent(false);
+        console.error('Error sending message:', error);
+        setNewMessage(messageContent);
+        
+        // Show user-friendly error message
+        const errorMessage = error.response?.data?.detail || 
+                           error.response?.data?.message || 
+                           'Failed to send message. Please try again.';
+        setError(errorMessage);
+        
+        // Optionally refresh messages to ensure consistency
+        if (selectedThread) {
+            await fetchThreadMessages(selectedThread.id);
+        }
     }
   };
 
-  const sendUserInput = async () => {
-    if (!selectedThread || !userInput.trim() || isAgentRunning) return;
-    
-    try {
-      setIsSendingMessage(true);
-      setError(null);
-      await axios.post(`${API_BASE_URL}/api/threads/${selectedThread.id}/user_input`, {
-        message: userInput
-      });
-      setUserInput('');
-    } catch (error: any) {
-      console.error('Error sending message:', error);
-      setError(error.response?.data?.detail || 'Failed to send message. Please try again.');
-    } finally {
-      setIsSendingMessage(false);
-    }
-  };
+  const isAwaitingInput = messages.length > 0 && 
+    messages[messages.length - 1].agent_state === 'await_input';
 
   const renderMessage = (message: Message) => {
-    const renderContent = (content: string | MessageContent[] | undefined) => {
-      if (!content) return null;
-      if (typeof content === 'string') return content;
-      return content.map((item, index) => (
-        <div key={index} className="text-gray-800">
-          {item.text}
-        </div>
-      ));
+    // Skip assistant messages that are tool calls
+    if (message.role === 'assistant' && message.tool_call_id) {
+      return null;
+    }
+
+    const messageClasses = {
+      assistant: 'bg-blue-50 text-blue-800',
+      tool: 'bg-green-50 text-green-800',
+      user: 'bg-gray-50 text-gray-800',
+      developer: 'bg-purple-50 text-purple-800'
     };
 
-    switch (message.role) {
-      case 'assistant':
-        return (
-          <div className="bg-blue-50 p-4 rounded-lg mb-4">
-            <div className="font-medium text-blue-800">Assistant</div>
-            <div className="text-gray-800 mt-2">{renderContent(message.content)}</div>
-            {message.tool_calls && message.tool_calls.length > 0 && (
-              <div className="mt-2">
-                <div className="font-medium text-blue-800">Using tools:</div>
-                {message.tool_calls.map((tool, index) => (
-                  <div key={index} className="bg-blue-100 p-2 rounded mt-1">
-                    <code>{tool.function.name}({tool.function.arguments})</code>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      case 'tool':
-        return (
-          <div className="bg-green-50 p-4 rounded-lg mb-4">
-            <div className="font-medium text-green-800">Tool Result</div>
-            <pre className="bg-green-100 p-2 rounded mt-2 overflow-x-auto">
-              <code>{renderContent(message.content)}</code>
-            </pre>
-          </div>
-        );
-      case 'user':
-        return (
-          <div className="bg-gray-50 p-4 rounded-lg mb-4">
-            <div className="font-medium text-gray-800">User</div>
-            <div className="text-gray-800 mt-2">{renderContent(message.content)}</div>
-          </div>
-        );
-      case 'developer':
-        return (
-          <div className="bg-purple-50 p-4 rounded-lg mb-4">
-            <div className="font-medium text-purple-800">Developer</div>
-            <div className="text-gray-800 mt-2">{renderContent(message.content)}</div>
-          </div>
-        );
-      default:
-        return null;
-    }
+    return (
+      <div className={`p-4 rounded-lg mb-4 ${messageClasses[message.role]}`}>
+        <div className="font-medium capitalize">
+          {message.role === 'tool' && message.tool_name 
+            ? `${message.role} (${message.tool_name})`
+            : message.role
+          }
+        </div>
+        <div className="mt-2">
+          {message.role === 'tool' ? (
+            <>
+              {message.content && (
+                <div className="mb-2">
+                  <span className="font-medium">Input: </span>
+                  {message.content}
+                </div>
+              )}
+              {message.tool_result && (
+                <div>
+                  <span className="font-medium">Result: </span>
+                  {message.tool_result}
+                </div>
+              )}
+            </>
+          ) : (
+            message.content
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Thread List Sidebar */}
+      {/* Thread List Panel */}
       <div className="w-1/4 bg-white border-r border-gray-200 p-4">
         <div className="mb-4">
-          <div className="flex flex-col gap-2">
-            <input
-              type="text"
-              value={newThreadTitle}
-              onChange={(e) => {
-                setNewThreadTitle(e.target.value);
-                setError(null);
-              }}
-              onKeyPress={(e) => e.key === 'Enter' && !isLoading && createThread()}
-              placeholder="New Thread Title"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button
-              onClick={createThread}
-              disabled={isLoading || !newThreadTitle.trim()}
-              className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                (isLoading || !newThreadTitle.trim()) ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              {isLoading ? 'Creating...' : 'Create'}
-            </button>
-            {error && (
-              <div className="text-red-500 text-sm mt-2">{error}</div>
-            )}
-          </div>
+          <input
+            type="text"
+            value={newThreadTitle}
+            onChange={(e) => setNewThreadTitle(e.target.value)}
+            placeholder="New Thread Title"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md mb-2"
+          />
+          <button
+            onClick={createThread}
+            disabled={isLoading}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isLoading ? 'Creating...' : 'Create Thread'}
+          </button>
+          {error && <div className="text-red-500 text-sm mt-2">{error}</div>}
         </div>
-        
+
         <div className="space-y-2">
           {threads.map((thread) => (
             <div
               key={thread.id}
-              onClick={() => handleThreadSelect(thread)}
+              onClick={() => setSelectedThread(thread)}
               className={`p-3 rounded-md cursor-pointer ${
                 selectedThread?.id === thread.id
-                  ? 'bg-blue-100 border-blue-300'
+                  ? 'bg-blue-100'
                   : 'hover:bg-gray-100'
               }`}
             >
@@ -322,76 +252,53 @@ export default function Agents() {
         </div>
       </div>
 
-      {/* Messages View */}
-      <div className="flex-1 flex flex-col h-full">
-        {selectedThread ? (
-          <>
-            <div className="flex justify-between items-center p-4 border-b">
-              <h2 className="text-2xl font-bold">{selectedThread.title}</h2>
-              {isAgentRunning ? (
-                <div className="flex items-center gap-2 px-4 py-2 bg-green-100 text-green-800 rounded-md">
-                  <div className="animate-spin h-4 w-4">
-                    <svg className="h-full w-full text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  </div>
-                  <span className="font-medium">Agent Running</span>
-                </div>
-              ) : (
-                <button
-                  onClick={startAgent}
-                  disabled={isStartingAgent}
-                  className={`px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 ${
-                    isStartingAgent ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  {isStartingAgent ? 'Starting Agent...' : 'Start Agent'}
-                </button>
-              )}
+      {/* Messages Panel */}
+      <div className="flex-1 flex flex-col">
+        <div className="flex-1 overflow-y-auto p-4">
+          {error && (
+            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+              {error}
             </div>
-            
-            <div className="flex-1 overflow-y-auto p-4">
+          )}
+          {selectedThread ? (
+            <div className="space-y-4">
               {messages.map((message, index) => (
-                <div key={index}>
-                  {renderMessage(message)}
-                </div>
+                message && <div key={index}>{renderMessage(message)}</div>
               ))}
-              <div ref={messagesEndRef} />
             </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              Select a thread to view messages
+            </div>
+          )}
+        </div>
 
-            <div className="p-4 border-t">
-              <div className="flex gap-2">
-                <textarea
-                  value={userInput}
-                  onChange={(e) => setUserInput(e.target.value)}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && !isSendingMessage) {
-                      e.preventDefault();
-                      sendUserInput();
-                    }
-                  }}
-                  placeholder={!isAgentRunning ? "Type your message..." : "Please wait for the agent to finish..."}
-                  disabled={isAgentRunning || isSendingMessage}
-                  className={`flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none h-[50px] ${
-                    isAgentRunning ? 'bg-gray-100 cursor-not-allowed' : ''
-                  }`}
-                />
-                <button
-                  onClick={sendUserInput}
-                  disabled={isAgentRunning || isSendingMessage || !userInput.trim()}
-                  className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    (isAgentRunning || isSendingMessage || !userInput.trim()) ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                >
-                  {isSendingMessage ? 'Sending...' : 'Send'}
-                </button>
-              </div>
+        {/* Message Input */}
+        {selectedThread && (
+          <div className="p-4 border-t border-gray-200 bg-white">
+            <div className="flex space-x-4">
+              <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                disabled={!isAwaitingInput}
+                placeholder={isAwaitingInput ? "Type your message..." : "Waiting for AI..."}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!isAwaitingInput || !newMessage.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                Send
+              </button>
             </div>
-          </>
-        ) : (
-          <div className="flex items-center justify-center h-full text-gray-500">
-            Select a thread to view messages
           </div>
         )}
       </div>

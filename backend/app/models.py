@@ -7,12 +7,14 @@ class Thread(Base):
     __tablename__ = "threads"
 
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), default="New Thread")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    title = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    state = Column(String, nullable=False, default="READY")  # Add default state
+    toolbox_state = Column(Text, nullable=False, default="{}")  # Add default toolbox state
 
     # Relationship with messages
-    messages = relationship("Message", back_populates="thread", cascade="all, delete-orphan")
+    messages = relationship("Message", back_populates="thread")
 
 class Message(Base):
     __tablename__ = "messages"
@@ -24,8 +26,8 @@ class Message(Base):
     
     api_message = Column(Text, nullable=False) # message for the API as json
     
+    agent_state = Column(String(10), nullable=False) # await_input, await_ai_response, await_tool_response
     role = Column(String(10), nullable=False) # user, agent, tool
- 
     content = Column(Text, nullable=True) # used to display content in the UI
     
     # Tool related

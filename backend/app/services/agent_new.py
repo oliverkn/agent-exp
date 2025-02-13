@@ -65,7 +65,7 @@ class Agent:
         
         self.tool_box = ToolBox(db)
         # self.tool_box.add_tool(UserInput())
-        self.tool_box.add_tool(UserInputCMD())
+        # self.tool_box.add_tool(UserInputCMD())
         self.tool_box.add_tool(SetupMSGraph())
         self.tool_box.add_tool(AuthenticateMSGraph())
         self.tool_box.add_tool(GetLatestEmail())
@@ -75,7 +75,7 @@ class Agent:
             schema = self._to_function_schema(tool)
             self.tools_schema.append(schema)
         
-        self._add_message("developer", "Your task is to use the available tools to solve the any given tasks.")
+        self._add_message(AgentState.AWAIT_INPUT, "developer", "Your task is to use the available tools to solve the any given tasks.")
         
     
     @staticmethod
@@ -101,7 +101,7 @@ class Agent:
                 model=self.model,
                 messages=self._get_api_messages(),
                 tools=self.tools_schema,
-                tool_choice="required",
+                tool_choice="auto",
                 parallel_tool_calls=False
             )
             self.logger.debug(completion.choices[0].message)
@@ -109,13 +109,14 @@ class Agent:
         
         self.exec_and_callback(run_completion, EventTypes.AI_RESULT)
     
-    def _add_message(self, role, content):
+    def _add_message(self, agent_state, role, content):
         self.logger.debug(f"Adding {role} message: {content}")
     
         with db.SessionLocal() as session:
             db_message = Message(
                 thread_id=self.thread_id,
                 api_message=json.dumps({"role": role, "content": content}),
+                agent_state=agent_state.value,
                 role=role,
                 content=content
             )
@@ -131,6 +132,7 @@ class Agent:
             db_message = Message(
                 thread_id=self.thread_id,
                 api_message=json.dumps({"role": "user", "content": msg}),
+                agent_state=AgentState.AWAIT_AI_RESPONSE.value,
                 role="user",
                 content=msg
             )
@@ -139,13 +141,21 @@ class Agent:
         
         self.emitter.emit(self.thread_id, {"status": "update"})
     
-    def _add_assistant_message(self, msg):
+    def _add_assistant_message(self, msg, finish_reason):
         self.logger.debug(f"Adding assistant message: {msg}")
+        
+        if finish_reason == "stop":
+            agent_state = AgentState.AWAIT_INPUT
+        elif finish_reason == "tool_calls":
+            agent_state = AgentState.AWAIT_TOOL_RESPONSE
+        else:
+            raise Exception(f"Invalid finish reason: {finish_reason}")
         
         with db.SessionLocal() as session:
             db_message = Message(
                 thread_id=self.thread_id,
                 api_message=json.dumps(msg.dict()),
+                agent_state=agent_state.value,
                 role=msg.role,
                 content=msg.content
             )
@@ -165,6 +175,7 @@ class Agent:
             db_message = Message(
                 thread_id=self.thread_id,
                 api_message=json.dumps(api_message),
+                agent_state=AgentState.AWAIT_TOOL_RESPONSE.value,
                 role="tool",
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
@@ -185,6 +196,7 @@ class Agent:
                 raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
             
             # Update existing message
+            db_message.content = tool_call_result.display_data
             db_message.tool_result = json.dumps(tool_call_result.result)
             db_message.tool_state = tool_call_result.state.value
             db_message.tool_display_data = tool_call_result.display_data
@@ -206,6 +218,8 @@ class Agent:
                 "tool_call_id": tool_call_id, 
                 "content": json.dumps(tool_call_result.result)
             })
+            db_message.agent_state = AgentState.AWAIT_AI_RESPONSE.value
+            db_message.content = tool_call_result.display_data
             db_message.tool_result = json.dumps(tool_call_result.result)
             db_message.tool_state = tool_call_result.state.value
             db_message.tool_display_data = tool_call_result.display_data
@@ -213,6 +227,14 @@ class Agent:
             session.commit()
         
         self.emitter.emit(self.thread_id, {"status": "update"})
+    
+    def _get_messages(self):
+        with db.SessionLocal() as session:
+            return session.query(Message).filter(Message.thread_id == self.thread_id).order_by(Message.created_at).all()
+            
+    def _get_latest_agent_state(self):
+        messages = self._get_messages()
+        return AgentState(messages[-1].agent_state)
     
     def _get_api_messages(self):
         with db.SessionLocal() as session:
@@ -224,8 +246,10 @@ class Agent:
             self.current_task.cancel()
         
     def handle_event(self, event: Event):
-        self.logger.debug(f"Handling event: {event.type} in state: {self.state}")
-        match self.state:
+        agent_state = self._get_latest_agent_state()
+        self.logger.debug(f"Handling event: {event.type} in state: {agent_state}")
+        
+        match agent_state:
             case AgentState.AWAIT_INPUT:
                 if event.type == EventTypes.USER:
                     self.logger.info("Processing user input")
@@ -248,8 +272,8 @@ class Agent:
                     self.logger.info("Processing interrupt")
                     pass
                 else:
-                    self.logger.error(f"Invalid event type {event.type} for current state {self.state}")
-                    raise Exception(f"Invalid event type {event.type} for current state {self.state}")
+                    self.logger.error(f"Invalid event type {event.type} for current state {agent_state}")
+                    raise Exception(f"Invalid event type {event.type} for current state {agent_state}")
             
             case AgentState.AWAIT_AI_RESPONSE:
                 if event.type == EventTypes.INTERRUPT:
@@ -269,12 +293,12 @@ class Agent:
                     
                     if completion.choices[0].finish_reason == "stop":
                         self.logger.debug("AI completion finished with 'stop'")
-                        self._add_assistant_message(completion.choices[0].message)
+                        self._add_assistant_message(completion.choices[0].message, completion.choices[0].finish_reason)
                         self._enter_await_input()
                         
                     elif completion.choices[0].finish_reason == "tool_calls":
                         self.logger.debug("AI completion finished with 'tool_calls'")
-                        self._add_assistant_message(completion.choices[0].message)
+                        self._add_assistant_message(completion.choices[0].message, completion.choices[0].finish_reason)
                         for tool_call in completion.choices[0].message.tool_calls:
                             name = tool_call.function.name
                             args = tool_call.function.arguments
@@ -282,8 +306,8 @@ class Agent:
                             
                             self._add_tool_result_message(tool_call.id, name, args)
                             
-                            def on_update(state: ToolCallResult): 
-                                self.__update_tool_call_message(tool_call.id, state)
+                            def on_update(tool_call_result: ToolCallResult): 
+                                self.__update_tool_call_message(tool_call.id, tool_call_result)
 
                             async def tool_execution():
                                 return tool_call.id, await self.tool_box.call(name, args, on_update)
@@ -295,8 +319,8 @@ class Agent:
                         raise Exception(f"Invalid finish reason {completion.choices[0].finish_reason}")
                         
                 else:
-                    self.logger.error(f"Invalid event type {event.type} for current state {self.state}")
-                    raise Exception(f"Invalid event type for current state {self.state}")
+                    self.logger.error(f"Invalid event type {event.type} for current state {agent_state}")
+                    raise Exception(f"Invalid event type for current state {agent_state}")
                     
             case AgentState.AWAIT_TOOL_RESPONSE:
                 if event.type == EventTypes.INTERRUPT:
@@ -315,8 +339,8 @@ class Agent:
                 elif event.type == EventTypes.NOTIFICATION:
                     self.notifications.append(event.data)
                 else:
-                    self.logger.error(f"Invalid event type for current state {self.state}")
-                    raise Exception(f"Invalid event type for current state {self.state}")
+                    self.logger.error(f"Invalid event type for current state {agent_state}")
+                    raise Exception(f"Invalid event type for current state {agent_state}")
         
         return True
                 
@@ -326,13 +350,22 @@ class Agent:
         async def wrapper():
             try:
                 self.logger.debug("Starting task execution")
+                
+                # Create new event loop for the thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Run the async function in the new thread
                 if asyncio.iscoroutinefunction(f):
-                    result = await asyncio.wait_for(f(), timeout=self.timeout) 
+                    result = await asyncio.wait_for(f(), timeout=self.timeout)
                 else:
-                    result = await asyncio.wait_for(asyncio.to_thread(f), timeout=self.timeout) 
+                    result = await asyncio.wait_for(asyncio.to_thread(f), timeout=self.timeout)
                 
                 event = Event(type=event_type, data=result)
                 self.handle_event(event)
+                
+                loop.close()
+                
             except asyncio.TimeoutError:
                 self.logger.error(f"Task timed out after {self.timeout} seconds")
                 event = Event(type=event_type, data={"error": f"Task timed out after {self.timeout} seconds"})
@@ -341,8 +374,9 @@ class Agent:
                 self.logger.error(f"Error in task execution: {e}", exc_info=True)
                 event = Event(type=event_type, data={"error": str(e)})
                 self.handle_event(event)
-            
-        self.current_task = asyncio.create_task(wrapper())
+
+        # Run wrapper in new thread
+        self.current_task = asyncio.create_task(asyncio.to_thread(lambda: asyncio.run(wrapper())))
     
     def _enter_await_input(self):
         self.logger.debug("Entering AWAIT_INPUT state")

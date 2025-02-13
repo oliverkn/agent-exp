@@ -160,7 +160,7 @@ class GetLatestEmail:
     tool_description = ""
     args_model = Args
     
-    async def run(self, args: Args, global_state: dict):
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
         headers = {"Authorization": f"Bearer {global_state['ms_graph.access_token']}"}
         GRAPH_API_URL = "https://graph.microsoft.com/v1.0/me/messages"
 
@@ -170,6 +170,6 @@ class GetLatestEmail:
         if response.status_code == 200:
             emails = response.json().get("value", [])
         else:
-            return {"Error:", response.json()}
-        
-        return {"subject": emails[0]["subject"], "from": emails[0]["from"]["emailAddress"]["address"], "receivedDateTime": emails[0]["receivedDateTime"], "bodyPreview": emails[0]["bodyPreview"]}
+            raise Exception(f"Error: {response.json()}")
+
+        return ToolCallResult(result={"subject": emails[0]["subject"], "from": emails[0]["from"]["emailAddress"]["address"], "receivedDateTime": emails[0]["receivedDateTime"], "bodyPreview": emails[0]["bodyPreview"]}, state=ToolCallState.COMPLETED)
