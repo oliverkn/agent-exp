@@ -5,11 +5,29 @@ from datetime import datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
 import asyncio
+import time
 import tkinter as tk
 from tkinter import simpledialog
+from sqlalchemy.orm import Session
+import json
+from enum import Enum
+
+from .models import Message
+
+class ToolCallState(Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    ERROR = "error"
+    
+
+class ToolCallResult(BaseModel):
+    result: object | None = None
+    state: ToolCallState
+    display_data: str | None = None
+    
 
 class ToolBox:
-    def __init__(self):
+    def __init__(self, db: Session):
         self.tools = {}
         self.global_state = {}
 
@@ -19,20 +37,20 @@ class ToolBox:
     def get_tools(self):
         return list(self.tools.values())
         
-    async def call(self, tool_name, args):
+    async def call(self, tool_name: str, args: dict, on_update) -> ToolCallResult:
         try:
             if tool_name not in self.tools:
                 raise Exception(f"Tool {tool_name} not found")
         
             tool = self.tools[tool_name]
-            
             args = tool.args_model.model_validate_json(args)
             
-            return await tool.run(args, self.global_state)
+            return await tool.run(args, self.global_state, on_update)
         
         except Exception as e:
-            return {"error": str(e)}
-            
+            return ToolCallResult(result={"error" : str(e)}, state=ToolCallState.ERROR)
+
+
 class UserInputCMD:
     class Args(BaseModel):
         message_to_user: str
@@ -41,26 +59,31 @@ class UserInputCMD:
     tool_name = "ask_user_for_input"
     tool_description = "This tool is used to get user input."
     
-    async def run(self, args: Args, global_state: dict):
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
         root = tk.Tk()
         root.withdraw()  # Hide the main window
-        user_input = simpledialog.askstring("Input", args.message_to_user)
-        root.destroy()
-        return {"user_input": user_input if user_input else ""}
+        
+        try:
+            user_input = simpledialog.askstring("Input", args.message_to_user)
+        finally:
+            root.quit()  # Stop the mainloop
+            root.destroy()  # Destroy the window
+        
+        return ToolCallResult(result=user_input, state=ToolCallState.COMPLETED)
     
-class UserInput:
-    class Args(BaseModel):
-        message_to_user: str
+# class UserInput:
+#     class Args(BaseModel):
+#         message_to_user: str
     
-    def __init__(self, input_function):
-        self.input_function = input_function
+#     def __init__(self, input_function):
+#         self.input_function = input_function
     
-    args_model = Args
-    tool_name = "ask_user_for_input"
-    tool_description = "This tool is used to get user input."
+#     args_model = Args
+#     tool_name = "ask_user_for_input"
+#     tool_description = "This tool is used to get user input."
     
-    async def run(self, args: Args, global_state: dict):
-        return {"user_input": self.input_function(args.message_to_user)}
+#     async def run(self, args: Args, global_state: dict):
+#         return {"user_input": self.input_function(args.message_to_user)}
 
 class SetupMSGraph:
     class Args(BaseModel):
@@ -76,12 +99,12 @@ class SetupMSGraph:
     If you don't have a client_id, tenant_id, or email, ask the user for it."""
     
 
-    async def run(self, args: Args, global_state: dict):
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
         global_state["ms_graph.email"] = args.email
         global_state["ms_graph.client_id"] = args.client_id
         global_state["ms_graph.tenant_id"] = args.tenant_id
         
-        return {"success": True}
+        return ToolCallResult(result=None, state=ToolCallState.COMPLETED)
 
 
 class AuthenticateMSGraph:
@@ -92,10 +115,12 @@ class AuthenticateMSGraph:
     tool_description = ""
     args_model = Args
 
-    async def run(self, args: Args, global_state: dict):
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
          # Microsoft Graph API endpoints
         AUTHORITY = f"https://login.microsoftonline.com/{global_state["ms_graph.tenant_id"]}"
         SCOPES = ["Mail.Read"]
+
+        display_text = ""
 
         # Initialize the MSAL client (Public Client)
         app = msal.PublicClientApplication(global_state["ms_graph.client_id"], authority=AUTHORITY)
@@ -106,16 +131,16 @@ class AuthenticateMSGraph:
             raise Exception("Failed to start device flow. Try again.")
 
         # Show user instructions
-        print(f"Please sign in at: {device_flow['verification_uri']}")
-        print(f"Use this code: {device_flow['user_code']}")
+        display_text += f"Please sign in at: {device_flow['verification_uri']}"
+        display_text += f"\nUse this code: {device_flow['user_code']}"
+        on_update(ToolCallResult(result=None, state=ToolCallState.RUNNING, display_data=display_text))
 
         # Continuously check if the user has signed in
-        print("\nWaiting for user to sign in...")
         while True:
             token_response = app.acquire_token_by_device_flow(device_flow)
             
             if "access_token" in token_response:
-                print("✅ Sign-in detected! Access token acquired.")
+                display_text += "\n✅ Sign-in detected! Access token acquired."
                 break
             elif "error" in token_response and token_response["error"] == "authorization_pending":
                 time.sleep(5)  # Wait and retry
@@ -124,7 +149,7 @@ class AuthenticateMSGraph:
             
         global_state["ms_graph.access_token"] = token_response["access_token"]
         
-        return {"success": True}
+        return ToolCallResult(result=None, state=ToolCallState.COMPLETED, display_data=display_text)
 
 
 class GetLatestEmail:

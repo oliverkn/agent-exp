@@ -3,6 +3,8 @@ import logging
 import sys
 from dotenv import load_dotenv
 
+from .. import models, database
+
 print("Script starting...")
 
 # Configure logging first
@@ -20,9 +22,13 @@ load_dotenv()
 from app.services.agent_new import Agent, Event, EventTypes
 
 async def main():
+    
+    # Create database tables
+    models.Base.metadata.create_all(bind=database.engine)
+    
     print("Entering main()")
     logger.info("Starting test run")
-    agent = Agent("test-thread")
+    agent = Agent("test-thread", db = database.get_db_session())
     
     try:
         # Make handle_event awaitable

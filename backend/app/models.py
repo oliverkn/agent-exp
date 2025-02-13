@@ -18,10 +18,23 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    content = Column(Text, nullable=False)
+    
     thread_id = Column(Integer, ForeignKey("threads.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    sender = Column(String(50), nullable=False, default="user")
-
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    api_message = Column(Text, nullable=False) # message for the API as json
+    
+    role = Column(String(10), nullable=False) # user, agent, tool
+ 
+    content = Column(Text, nullable=True) # used to display content in the UI
+    
+    # Tool related
+    tool_call_id = Column(String(50), nullable=True)
+    tool_name = Column(String(50), nullable=True)
+    tool_args = Column(Text, nullable=True)
+    # tool_display_data = Column(Text, nullable=True)
+    tool_state = Column(String(10), nullable=True) # running, completed, error
+    tool_result = Column(Text, nullable=True)
+    
     # Relationship with thread
     thread = relationship("Thread", back_populates="messages")

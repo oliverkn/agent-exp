@@ -24,6 +24,8 @@ from pyee import EventEmitter
 from openai import OpenAI
 
 from ..tools import *
+from sqlalchemy.orm import Session
+from ..models import Message
 
 class AgentState(Enum):
     AWAIT_INPUT = 'await_input'
@@ -42,8 +44,9 @@ class Event(BaseModel):
     data: object
 
 class Agent:
-    def __init__(self, thread_id):
+    def __init__(self, thread_id, db: Session):
         self.thread_id = thread_id
+        self.db = db
         
         # Simplified logger setup
         self.logger = logging.getLogger(f"Agent-{thread_id}")
@@ -60,7 +63,7 @@ class Agent:
         self.notifications = []
         self.current_task = None
         
-        self.tool_box = ToolBox()
+        self.tool_box = ToolBox(db)
         # self.tool_box.add_tool(UserInput())
         self.tool_box.add_tool(UserInputCMD())
         self.tool_box.add_tool(SetupMSGraph())
@@ -73,7 +76,16 @@ class Agent:
             self.tools_schema.append(schema)
             
         self.messages = []
-        self.messages.append({"role": "developer", "content": [{"type" : "text", "text" : "Your task is to use the available tools to solve the any given tasks."}]})
+        self.messages.append({"role": "developer", "content": "Your task is to use the available tools to solve the any given tasks."})
+        
+        # Load existing messages from database
+        # db_messages = self.db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.created_at).all()
+        # for msg in db_messages:
+        #     self.messages.append({
+        #         "role": msg.role,
+        #         "content": msg.content,
+        #         **({"tool_call_id": msg.tool_call_id} if msg.tool_call_id else {})
+        #     })
     
     @staticmethod
     def _to_function_schema(tool):    
@@ -101,12 +113,97 @@ class Agent:
                 tool_choice="required",
                 parallel_tool_calls=False
             )
+            self.logger.debug(completion.choices[0].message)
             return completion
         
         self.exec_and_callback(run_completion, EventTypes.AI_RESULT)
     
-    def _add_message(self, msg):
+    def _add_user_message(self, msg):
+        self.logger.debug(f"Adding user message: {msg}")
+        
+        api_message = {"role": "user", "content": msg}
+        self.messages.append(api_message)
+        
+        # Store message in database
+        db_message = Message(
+            thread_id=self.thread_id,
+            api_message=json.dumps(api_message),
+            role="user",
+            content=msg
+        )
+        self.db.add(db_message)
+        self.db.commit()
+        
+        self.emitter.emit(self.thread_id, {"status": "update"})
+    
+    def _add_assistant_message(self, msg):
+        self.logger.debug(f"Adding assistant message: {msg}")
+        
+         # Store message in database
+        db_message = Message(
+            thread_id=self.thread_id,
+            api_message=json.dumps(msg.dict()),
+            role=msg.role,
+            content=msg.content
+        )
+        self.db.add(db_message)
+        self.db.commit()
+        
         self.messages.append(msg)
+
+        self.emitter.emit(self.thread_id, {"status": "update"})
+    
+    def _add_tool_result_message(self, tool_call_id, tool_name, tool_args):
+        api_message = {
+            "role": "tool", 
+            "tool_call_id": tool_call_id, 
+            "content": json.dumps({"error" : "Tool call was cancelled."})
+        }
+        self.messages.append(api_message)
+        
+        db_message = Message(
+            thread_id=self.thread_id,
+            api_message=json.dumps(api_message),
+            role="tool",
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            tool_args=json.dumps(tool_args),
+            tool_state="running"
+        )
+        self.db.add(db_message)
+        self.db.commit()
+        self.emitter.emit(self.thread_id, {"status": "update"})
+    
+    def __update_tool_call_message(self, tool_call_id, tool_call_result):
+        db_message = self.db.query(Message).filter(Message.tool_call_id == tool_call_id).first()
+        if not db_message:
+            raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
+        
+        # Update existing message
+        db_message.tool_result = json.dumps(tool_call_result.result)
+        db_message.tool_state = tool_call_result.state.value
+        db_message.tool_display_data = tool_call_result.display_data
+        
+        self.db.commit()
+        
+        self.emitter.emit(self.thread_id, {"status": "update"})
+        
+    def __finalize_tool_call_message(self, tool_call_id, tool_call_result):
+        api_message = self.messages[-1]
+        api_message["content"] = json.dumps(tool_call_result.result)
+        
+        db_message = self.db.query(Message).filter(Message.tool_call_id == tool_call_id).first()
+        if not db_message:
+            raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
+        
+        # Update existing message
+        db_message.api_message = json.dumps(api_message)
+        db_message.tool_result = json.dumps(tool_call_result.result)
+        db_message.tool_state = tool_call_result.state.value
+        db_message.tool_display_data = tool_call_result.display_data
+        
+        self.db.commit()
+        
         self.emitter.emit(self.thread_id, {"status": "update"})
     
     def _cancel_current_task(self):
@@ -119,7 +216,7 @@ class Agent:
             case AgentState.AWAIT_INPUT:
                 if event.type == EventTypes.USER:
                     self.logger.info("Processing user input")
-                    self._add_message({"role": "user", "content": event.data})
+                    self._add_user_message(event.data)
                     self._submit_completion()
                     self._enter_await_ai_response()
                 elif event.type == EventTypes.NOTIFICATION:
@@ -130,7 +227,7 @@ class Agent:
                     for notification in self.notifications:
                         content += f"\n{notification}"
 
-                    self._add_message({"role": "developer", "content": content})
+                    self._add_user_message(event.data)
                     self._submit_completion()
                     self._enter_await_ai_response()
                     
@@ -155,21 +252,28 @@ class Agent:
                     self.logger.info("Processing AI result")
                     completion = event.data
                     
+                    self.logger.debug(f"AI completion: {completion.choices[0].message}")
+                    
                     if completion.choices[0].finish_reason == "stop":
                         self.logger.debug("AI completion finished with 'stop'")
-                        self._add_message(completion.choices[0].message)
+                        self._add_assistant_message(completion.choices[0].message)
                         self._enter_await_input()
                         
                     elif completion.choices[0].finish_reason == "tool_calls":
                         self.logger.debug("AI completion finished with 'tool_calls'")
-                        self._add_message(completion.choices[0].message)
+                        self._add_assistant_message(completion.choices[0].message)
                         for tool_call in completion.choices[0].message.tool_calls:
                             name = tool_call.function.name
                             args = tool_call.function.arguments
                             self.logger.info(f"Calling tool: {name}({args})")
+                            
+                            self._add_tool_result_message(tool_call.id, name, args)
+                            
+                            def on_update(state: ToolCallResult): 
+                                self.__update_tool_call_message(tool_call.id, state)
 
                             async def tool_execution():
-                                return tool_call.id, await self.tool_box.call(name, args)
+                                return tool_call.id, await self.tool_box.call(name, args, on_update)
 
                             self.exec_and_callback(tool_execution, EventTypes.TOOL_RESULT)
                             self._enter_await_tool_response()
@@ -188,16 +292,13 @@ class Agent:
                     self._enter_await_input()
                     
                 elif event.type == EventTypes.TOOL_RESULT:
-                    tool_call_id, result = event.data
-                    
-                    self._add_message({
-                        "role": "tool", 
-                        "tool_call_id": tool_call_id, 
-                        "content": json.dumps(result)
-                    })
+                    tool_call_id, tool_call_result = event.data
+                    self.logger.info(f"Processing tool result for tool_call_id: {tool_call_id}")
+                    self.__finalize_tool_call_message(tool_call_id, tool_call_result)
                     
                     self._submit_completion()
                     self._enter_await_ai_response()
+                    
                 elif event.type == EventTypes.NOTIFICATION:
                     self.notifications.append(event.data)
                 else:
