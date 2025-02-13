@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
 import asyncio
+import tkinter as tk
+from tkinter import simpledialog
 
 class ToolBox:
     def __init__(self):
@@ -40,8 +42,11 @@ class UserInputCMD:
     tool_description = "This tool is used to get user input."
     
     async def run(self, args: Args, global_state: dict):
-        print(args.message_to_user)
-        return {"user_input": input()}
+        root = tk.Tk()
+        root.withdraw()  # Hide the main window
+        user_input = simpledialog.askstring("Input", args.message_to_user)
+        root.destroy()
+        return {"user_input": user_input if user_input else ""}
     
 class UserInput:
     class Args(BaseModel):

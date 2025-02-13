@@ -11,3 +11,4 @@ requests
 msal
 openai
 websockets
+pyee
