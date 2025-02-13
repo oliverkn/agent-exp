@@ -17,6 +17,10 @@ htmlcov/
 env/
 venv/
 ENV/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
 
 # React/Node
 frontend/build/
@@ -37,3 +41,4 @@ frontend/coverage/
 *.swo
 .DS_Store
 Thumbs.db
+frontend/node_modules/.cache/default-development/2.pack
