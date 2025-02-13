@@ -28,7 +28,7 @@ async def main():
     
     print("Entering main()")
     logger.info("Starting test run")
-    agent = Agent("test-thread", db = database.get_db_session())
+    agent = Agent("test-thread")
     
     try:
         # Make handle_event awaitable

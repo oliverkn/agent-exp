@@ -25,7 +25,8 @@ from openai import OpenAI
 
 from ..tools import *
 from sqlalchemy.orm import Session
-from ..models import Message
+from ..models import Message, Thread
+from .. import database as db
 
 class AgentState(Enum):
     AWAIT_INPUT = 'await_input'
@@ -44,9 +45,8 @@ class Event(BaseModel):
     data: object
 
 class Agent:
-    def __init__(self, thread_id, db: Session):
+    def __init__(self, thread_id: str):
         self.thread_id = thread_id
-        self.db = db
         
         # Simplified logger setup
         self.logger = logging.getLogger(f"Agent-{thread_id}")
@@ -74,18 +74,9 @@ class Agent:
         for tool in self.tool_box.get_tools():
             schema = self._to_function_schema(tool)
             self.tools_schema.append(schema)
-            
-        self.messages = []
-        self.messages.append({"role": "developer", "content": "Your task is to use the available tools to solve the any given tasks."})
         
-        # Load existing messages from database
-        # db_messages = self.db.query(Message).filter(Message.thread_id == thread_id).order_by(Message.created_at).all()
-        # for msg in db_messages:
-        #     self.messages.append({
-        #         "role": msg.role,
-        #         "content": msg.content,
-        #         **({"tool_call_id": msg.tool_call_id} if msg.tool_call_id else {})
-        #     })
+        self._add_message("developer", "Your task is to use the available tools to solve the any given tasks.")
+        
     
     @staticmethod
     def _to_function_schema(tool):    
@@ -108,7 +99,7 @@ class Agent:
         def run_completion():
             completion = self.client.chat.completions.create(
                 model=self.model,
-                messages=self.messages,
+                messages=self._get_api_messages(),
                 tools=self.tools_schema,
                 tool_choice="required",
                 parallel_tool_calls=False
@@ -118,93 +109,115 @@ class Agent:
         
         self.exec_and_callback(run_completion, EventTypes.AI_RESULT)
     
+    def _add_message(self, role, content):
+        self.logger.debug(f"Adding {role} message: {content}")
+    
+        with db.SessionLocal() as session:
+            db_message = Message(
+                thread_id=self.thread_id,
+                api_message=json.dumps({"role": role, "content": content}),
+                role=role,
+                content=content
+            )
+            session.add(db_message)
+            session.commit()
+        
+        self.emitter.emit(self.thread_id, {"status": "update"})
+    
     def _add_user_message(self, msg):
         self.logger.debug(f"Adding user message: {msg}")
-        
-        api_message = {"role": "user", "content": msg}
-        self.messages.append(api_message)
-        
-        # Store message in database
-        db_message = Message(
-            thread_id=self.thread_id,
-            api_message=json.dumps(api_message),
-            role="user",
-            content=msg
-        )
-        self.db.add(db_message)
-        self.db.commit()
+              
+        with db.SessionLocal() as session:
+            db_message = Message(
+                thread_id=self.thread_id,
+                api_message=json.dumps({"role": "user", "content": msg}),
+                role="user",
+                content=msg
+            )
+            session.add(db_message)
+            session.commit()
         
         self.emitter.emit(self.thread_id, {"status": "update"})
     
     def _add_assistant_message(self, msg):
         self.logger.debug(f"Adding assistant message: {msg}")
         
-         # Store message in database
-        db_message = Message(
-            thread_id=self.thread_id,
-            api_message=json.dumps(msg.dict()),
-            role=msg.role,
-            content=msg.content
-        )
-        self.db.add(db_message)
-        self.db.commit()
+        with db.SessionLocal() as session:
+            db_message = Message(
+                thread_id=self.thread_id,
+                api_message=json.dumps(msg.dict()),
+                role=msg.role,
+                content=msg.content
+            )
+            session.add(db_message)
+            session.commit()
         
-        self.messages.append(msg)
-
         self.emitter.emit(self.thread_id, {"status": "update"})
     
     def _add_tool_result_message(self, tool_call_id, tool_name, tool_args):
+        self.logger.debug(f"Adding tool call result for tool call {tool_call_id}")
         api_message = {
             "role": "tool", 
             "tool_call_id": tool_call_id, 
             "content": json.dumps({"error" : "Tool call was cancelled."})
         }
-        self.messages.append(api_message)
-        
-        db_message = Message(
-            thread_id=self.thread_id,
-            api_message=json.dumps(api_message),
-            role="tool",
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            tool_args=json.dumps(tool_args),
-            tool_state="running"
-        )
-        self.db.add(db_message)
-        self.db.commit()
+        with db.SessionLocal() as session:
+            db_message = Message(
+                thread_id=self.thread_id,
+                api_message=json.dumps(api_message),
+                role="tool",
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                tool_args=json.dumps(tool_args),
+                tool_state="running"
+            )
+            session.add(db_message)
+            session.commit()
+            
         self.emitter.emit(self.thread_id, {"status": "update"})
     
     def __update_tool_call_message(self, tool_call_id, tool_call_result):
-        db_message = self.db.query(Message).filter(Message.tool_call_id == tool_call_id).first()
-        if not db_message:
-            raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
+        self.logger.debug(f"Updating tool call message for tool_call_id: {tool_call_id}")
         
-        # Update existing message
-        db_message.tool_result = json.dumps(tool_call_result.result)
-        db_message.tool_state = tool_call_result.state.value
-        db_message.tool_display_data = tool_call_result.display_data
-        
-        self.db.commit()
+        with db.SessionLocal() as session:
+            db_message = session.query(Message).filter(Message.tool_call_id == tool_call_id).first()
+            if not db_message:
+                raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
+            
+            # Update existing message
+            db_message.tool_result = json.dumps(tool_call_result.result)
+            db_message.tool_state = tool_call_result.state.value
+            db_message.tool_display_data = tool_call_result.display_data
+            
+            session.commit()
         
         self.emitter.emit(self.thread_id, {"status": "update"})
         
     def __finalize_tool_call_message(self, tool_call_id, tool_call_result):
-        api_message = self.messages[-1]
-        api_message["content"] = json.dumps(tool_call_result.result)
+        self.logger.debug(f"Finalizing tool call message for tool_call_id: {tool_call_id}")
         
-        db_message = self.db.query(Message).filter(Message.tool_call_id == tool_call_id).first()
-        if not db_message:
-            raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
+        with db.SessionLocal() as session:
+            db_message = session.query(Message).filter(Message.tool_call_id == tool_call_id).first()
+            if not db_message:
+                raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
         
-        # Update existing message
-        db_message.api_message = json.dumps(api_message)
-        db_message.tool_result = json.dumps(tool_call_result.result)
-        db_message.tool_state = tool_call_result.state.value
-        db_message.tool_display_data = tool_call_result.display_data
-        
-        self.db.commit()
+            db_message.api_message = json.dumps({
+                "role": "tool", 
+                "tool_call_id": tool_call_id, 
+                "content": json.dumps(tool_call_result.result)
+            })
+            db_message.tool_result = json.dumps(tool_call_result.result)
+            db_message.tool_state = tool_call_result.state.value
+            db_message.tool_display_data = tool_call_result.display_data
+            
+            session.commit()
         
         self.emitter.emit(self.thread_id, {"status": "update"})
+    
+    def _get_api_messages(self):
+        with db.SessionLocal() as session:
+            db_message_list = session.query(Message).filter(Message.thread_id == self.thread_id).order_by(Message.created_at).all()
+            return [json.loads(msg.api_message) for msg in db_message_list]
     
     def _cancel_current_task(self):
         if self.current_task is not None:
