@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 import json
 from enum import Enum
 
-from .models import Message
+from .models import Message, Thread
+from . import database as db
 
 class ToolCallState(Enum):
     RUNNING = "running"
@@ -28,9 +29,21 @@ class ToolCallResult(BaseModel):
     
 
 class ToolBox:
-    def __init__(self, db: Session):
+    def __init__(self, thread_id: int):
+        self.thread_id = thread_id
+        
         self.tools = {}
         self.global_state = {}
+        
+        with db.SessionLocal() as session:
+            #load thread
+            self.thread = session.query(Thread).filter(Thread.id == thread_id).first()
+            if not self.thread:
+                raise Exception(f"Thread {thread_id} not found")
+            
+            #load toolbox state
+            self.global_state = json.loads(self.thread.toolbox_state)
+            
 
     def add_tool(self, tool):
         self.tools[tool.tool_name] = tool
@@ -45,8 +58,14 @@ class ToolBox:
         
             tool = self.tools[tool_name]
             args = tool.args_model.model_validate_json(args)
-            
-            return await tool.run(args, self.global_state, on_update)
+            tool_call_result = await tool.run(args, self.global_state, on_update)
+        
+            with db.SessionLocal() as session:
+                thread = session.query(Thread).filter(Thread.id == self.thread_id).first()
+                thread.toolbox_state = json.dumps(self.global_state)
+                session.commit()
+                
+            return tool_call_result
         
         except Exception as e:
             return ToolCallResult(result={"error" : str(e)}, state=ToolCallState.ERROR)
@@ -320,3 +339,331 @@ class ViewPdfAttachment:
             result=images,
             state=ToolCallState.COMPLETED
         )
+
+
+# class AuthorizeBexio:
+#     class Args(BaseModel):
+#         client_id: str
+#         client_secret: str
+#         redirect_uri: str
+#         code: str
+    
+#     tool_name = "authorize_bexio"
+#     tool_description = "This tool is used to authorize the Bexio API."
+#     args_model = Args
+
+class BexioGetContacts:
+    class Args(BaseModel):
+        pass
+    
+    tool_name = "bexio_get_contacts"
+    tool_description = "Lists all contacts from Bexio."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
+        }
+
+        try:
+            response = requests.get("https://api.bexio.com/2.0/contact", headers=headers)
+            
+            if response.status_code == 200:
+                contacts = response.json()
+                simplified_contacts = [
+                    {
+                        "id": contact["id"],
+                        "name": contact["name_1"],
+                        "address": contact["address"],
+                        "postcode": contact["postcode"]
+                    }
+                    for contact in contacts
+                ]
+                return ToolCallResult(
+                    result=simplified_contacts,
+                    state=ToolCallState.COMPLETED
+                )
+            else:
+                return ToolCallResult(
+                    result={"error": f"Failed to fetch contacts: {response.status_code} - {response.text}"},
+                    state=ToolCallState.ERROR
+                )
+                
+        except Exception as e:
+            return ToolCallResult(
+                result={"error": f"Error fetching contacts: {str(e)}"},
+                state=ToolCallState.ERROR
+            )
+            
+class BexioCreateContact:
+    class Args(BaseModel):
+        name: str = Field(description="Primary name of the contact (name_1)")
+        address: str = Field(description="Street address")
+        postcode: str = Field(description="Postal code")
+        city: str = Field(description="City name")
+        email: str | None = Field(default=None, description="Primary email address")
+        phone: str | None = Field(default=None, description="Fixed phone number")
+        mobile: str | None = Field(default=None, description="Mobile phone number")
+        website: str | None = Field(default=None, description="Website URL")
+        remarks: str | None = Field(default=None, description="Additional remarks")
+    
+    tool_name = "bexio_create_contact"
+    tool_description = "Creates a new contact in Bexio with the specified information."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
+        }
+
+        # Construct the payload with required and optional fields
+        payload = {
+            "contact_type_id": 1,  # 1 is typically for company
+            "name_1": args.name,
+            "address": args.address,
+            "postcode": args.postcode,
+            "city": args.city,
+            "country_id": 1,  # 1 is typically for Switzerland
+            "user_id": 1,
+            "owner_id": 1
+        }
+
+        # Add optional fields if they are provided
+        if args.email:
+            payload["mail"] = args.email
+        if args.phone:
+            payload["phone_fixed"] = args.phone
+        if args.mobile:
+            payload["phone_mobile"] = args.mobile
+        if args.website:
+            payload["url"] = args.website
+        if args.remarks:
+            payload["remarks"] = args.remarks
+
+        try:
+            response = requests.post(
+                "https://api.bexio.com/2.0/contact",
+                json=payload,  # using json parameter to automatically handle JSON encoding
+                headers=headers
+            )
+            
+            if response.status_code in (200, 201):
+                return ToolCallResult(
+                    result=response.json(),
+                    state=ToolCallState.COMPLETED
+                )
+            else:
+                return ToolCallResult(
+                    result={"error": f"Failed to create contact: {response.status_code} - {response.text}"},
+                    state=ToolCallState.ERROR
+                )
+                
+        except Exception as e:
+            return ToolCallResult(
+                result={"error": f"Error creating contact: {str(e)}"},
+                state=ToolCallState.ERROR
+            )
+        
+# class BexioCreateInvoicePayable:
+#     class Address(BaseModel):
+#         lastname_company: str
+#         address_line: str
+#         postcode: str
+#         city: str
+#         country_code: str = "CH"
+        
+#     class LineItem(BaseModel):
+#         title: str
+#         amount: float
+#         tax_id: int
+#         booking_account_id: int
+#         position: int | None = None
+        
+#     class Payment(BaseModel):
+#         type: Literal["IBAN"] = "IBAN"
+#         iban: str
+#         name: str
+#         address: str
+#         postcode: str
+#         city: str
+#         country_code: str = "CH"
+#         execution_date: str | None = None
+#         message: str | None = None
+        
+#     class Args(BaseModel):
+#         supplier_id: int = Field(description="ID of the contact that represents the supplier")
+#         title: str = Field(description="Title of the bill")
+#         bill_date: str = Field(description="Date of the bill (YYYY-MM-DD)")
+#         due_date: str = Field(description="Due date of the bill (YYYY-MM-DD)")
+#         currency_code: str = Field(default="CHF", description="Currency code (default: CHF)")
+#         address: Address = Field(description="Address information of the supplier")
+#         line_items: list[LineItem] = Field(description="List of line items for the bill")
+#         payment: Payment = Field(description="Payment information")
+#         vendor_ref: str | None = Field(default=None, description="Reference text from vendor")
+#         attachment_ids: list[str] | None = Field(default=None, description="List of attachment IDs")
+    
+#     tool_name = "bexio_create_invoice_payable"
+#     tool_description = "Creates a new invoice payable in Bexio with the specified information."
+#     args_model = Args
+    
+#     async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+#         headers = {
+#             "Accept": "application/json",
+#             "Content-Type": "application/json",
+#             "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
+#         }
+
+#         # Calculate total amount from line items
+#         total_amount = sum(item.amount for item in args.line_items)
+
+#         # Assign positions to line items if not provided
+#         for i, item in enumerate(args.line_items):
+#             if item.position is None:
+#                 item.position = i
+
+#         # Construct the payload
+#         payload = {
+#             "supplier_id": args.supplier_id,
+#             "title": args.title,
+#             "bill_date": args.bill_date,
+#             "due_date": args.due_date,
+#             "currency_code": args.currency_code,
+#             "amount_calc": total_amount,
+#             "manual_amount": False,
+#             "item_net": False,
+#             "address": {
+#                 "lastname_company": args.address.lastname_company,
+#                 "address_line": args.address.address_line,
+#                 "postcode": args.address.postcode,
+#                 "city": args.address.city,
+#                 "country_code": args.address.country_code,
+#                 "type": "PRIVATE"
+#             },
+#             "line_items": [item.model_dump(exclude_none=True) for item in args.line_items],
+#             "payment": {
+#                 "type": args.payment.type,
+#                 "iban": args.payment.iban,
+#                 "name": args.payment.name,
+#                 "address": args.payment.address,
+#                 "postcode": args.payment.postcode,
+#                 "city": args.payment.city,
+#                 "country_code": args.payment.country_code
+#             }
+#         }
+
+#         # Add optional fields
+#         if args.vendor_ref:
+#             payload["vendor_ref"] = args.vendor_ref
+#         if args.attachment_ids:
+#             payload["attachment_ids"] = args.attachment_ids
+#         if args.payment.execution_date:
+#             payload["payment"]["execution_date"] = args.payment.execution_date
+#         if args.payment.message:
+#             payload["payment"]["message"] = args.payment.message
+
+#         try:
+#             response = requests.post(
+#                 "https://api.bexio.com/4.0/purchase/bills",
+#                 json=payload,
+#                 headers=headers
+#             )
+            
+#             if response.status_code in (200, 201):
+#                 return ToolCallResult(
+#                     result=response.json(),
+#                     state=ToolCallState.COMPLETED
+#                 )
+#             else:
+#                 return ToolCallResult(
+#                     result={"error": f"Failed to create invoice: {response.status_code} - {response.text}"},
+#                     state=ToolCallState.ERROR
+#                 )
+                
+#         except Exception as e:
+#             return ToolCallResult(
+#                 result={"error": f"Error creating invoice: {str(e)}"},
+#                 state=ToolCallState.ERROR
+#             )
+            
+class BexioUploadEmailAttachment:
+    class Args(BaseModel):
+        email_id: str = Field(description="ID of the email containing the attachment")
+        attachment_id: str = Field(description="ID of the attachment to upload")
+        
+    tool_name = "upload_email_attachment_to_bexio"
+    tool_description = "Uploads an attachment from an email to Bexio."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        # First, download the attachment from MS Graph
+        if "ms_graph.access_token" not in global_state:
+            return ToolCallResult(
+                result={"error": "Microsoft Graph not authenticated. Please authenticate first."},
+                state=ToolCallState.ERROR
+            )
+
+        ms_headers = {
+            "Authorization": f"Bearer {global_state['ms_graph.access_token']}"
+        }
+
+        # Get attachment metadata first to get the name
+        metadata_url = f"https://graph.microsoft.com/v1.0/me/messages/{args.email_id}/attachments/{args.attachment_id}"
+        metadata_response = requests.get(metadata_url, headers=ms_headers)
+        
+        if metadata_response.status_code != 200:
+            return ToolCallResult(
+                result={"error": f"Failed to get attachment metadata: {metadata_response.status_code} - {metadata_response.text}"},
+                state=ToolCallState.ERROR
+            )
+            
+        attachment_name = metadata_response.json().get("name")
+        
+        # Download the attachment content
+        download_url = f"https://graph.microsoft.com/v1.0/me/messages/{args.email_id}/attachments/{args.attachment_id}/$value"
+        download_response = requests.get(download_url, headers=ms_headers)
+        
+        if download_response.status_code != 200:
+            return ToolCallResult(
+                result={"error": f"Failed to download attachment: {download_response.status_code} - {download_response.text}"},
+                state=ToolCallState.ERROR
+            )
+
+        # Now upload to Bexio
+        bexio_headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
+        }
+
+        # Create a multipart form-data request with the file
+        files = {
+            'file': (attachment_name, download_response.content)
+        }
+
+        try:
+            response = requests.post(
+                "https://api.bexio.com/3.0/files",
+                headers=bexio_headers,  # Don't include Content-Type here, requests will set it automatically for multipart
+                files=files
+            )
+            
+            if response.status_code in (200, 201):
+                return ToolCallResult(
+                    result=response.json(),
+                    state=ToolCallState.COMPLETED,
+                    display_data=f"Successfully uploaded {attachment_name} to Bexio"
+                )
+            else:
+                return ToolCallResult(
+                    result={"error": f"Failed to upload to Bexio: {response.status_code} - {response.text}"},
+                    state=ToolCallState.ERROR
+                )
+                
+        except Exception as e:
+            return ToolCallResult(
+                result={"error": f"Error uploading to Bexio: {str(e)}"},
+                state=ToolCallState.ERROR
+            )
+        

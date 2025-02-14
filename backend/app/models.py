@@ -15,7 +15,7 @@ class Thread(Base):
 
     # Relationship with messages
     messages = relationship("Message", back_populates="thread")
-
+    
 class Message(Base):
     __tablename__ = "messages"
 

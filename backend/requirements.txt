@@ -16,3 +16,5 @@ pyee
 # PDF
 Pillow
 PyMuPDF
+
+Authlib

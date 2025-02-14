@@ -69,6 +69,10 @@ class Agent:
         self.tool_box.add_tool(GetLatestEmail())
         self.tool_box.add_tool(ListEmails())
         self.tool_box.add_tool(ViewPdfAttachment())
+        self.tool_box.add_tool(BexioGetContacts())
+        self.tool_box.add_tool(BexioCreateContact())
+        # self.tool_box.add_tool(BexioCreateInvoicePayable())
+        self.tool_box.add_tool(BexioUploadEmailAttachment())
         
         self.tools_schema = []
         for tool in self.tool_box.get_tools():
