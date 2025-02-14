@@ -63,7 +63,7 @@ class Agent:
         self.notifications = []
         self.current_task = None
         
-        self.tool_box = ToolBox(db)
+        self.tool_box = ToolBox(self.thread_id)
         self.tool_box.add_tool(SetupMSGraph())
         self.tool_box.add_tool(AuthenticateMSGraph())
         self.tool_box.add_tool(GetLatestEmail())

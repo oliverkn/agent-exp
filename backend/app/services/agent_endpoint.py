@@ -34,7 +34,7 @@ async def create_thread(thread: ThreadCreate, db: Session = Depends(get_db)):
         
         return db_thread
     except Exception as e:
-        logger.error(f"Error creating thread: {str(e)}")
+        logger.error(f"Error creating thread: {str(e)}", exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -46,7 +46,7 @@ async def list_threads(db: Session = Depends(get_db)):
         logger.info(f"Successfully fetched {len(threads)} threads")
         return threads
     except Exception as e:
-        logger.error(f"Error fetching threads: {str(e)}")
+        logger.error(f"Error fetching threads: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/api/threads/{thread_id}/get_thread_messages")
@@ -63,7 +63,7 @@ async def get_thread_messages(thread_id: int, db: Session = Depends(get_db)):
         logger.info(f"Successfully fetched {len(messages)} messages for thread {thread_id}")
         return messages
     except Exception as e:
-        logger.error(f"Error fetching messages for thread {thread_id}: {str(e)}")
+        logger.error(f"Error fetching messages for thread {thread_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     
 @router.get("/api/threads/{thread_id}/get_thread_message/{message_id}")
@@ -79,7 +79,7 @@ async def get_thread_message(thread_id: int, message_id: int, db: Session = Depe
         logger.info(f"Successfully fetched message with ID: {message_id} for thread {thread_id}")
         return message
     except Exception as e:
-        logger.error(f"Error fetching message with ID {message_id} for thread {thread_id}: {str(e)}")
+        logger.error(f"Error fetching message with ID {message_id} for thread {thread_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.websocket("/ws/{thread_id}")
@@ -104,7 +104,7 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: int):
             await manager.disconnect(websocket, thread_id)
             logger.info(f"WebSocket disconnected for thread {thread_id}")
     except Exception as e:
-        logger.error(f"Error in WebSocket connection: {str(e)}")
+        logger.error(f"Error in WebSocket connection: {str(e)}", exc_info=True)
         await websocket.close()
 
 @router.post("/api/threads/{thread_id}/message")

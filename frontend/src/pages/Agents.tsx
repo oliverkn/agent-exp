@@ -375,14 +375,46 @@ export default function Agents() {
   };
 
   const addMessage = (msg: Message) => {
-    setMessages(prevMessages => [...prevMessages, msg]);
+    console.log('Adding new message:', {
+      message: msg,
+      tool_args: msg.tool_args,
+      tool_result: msg.tool_result,
+      tool_name: msg.tool_name
+    });
+    
+    setMessages(prevMessages => [...prevMessages, {
+      ...msg,
+      // Ensure tool-specific fields are explicitly included
+      tool_args: msg.tool_args || undefined,
+      tool_result: msg.tool_result || undefined,
+      tool_name: msg.tool_name || undefined,
+      tool_call_id: msg.tool_call_id || undefined
+    }]);
   };
 
   const updateMessage = (updatedMsg: Message) => {
+    console.log('Updating message:', {
+      message: updatedMsg,
+      tool_args: updatedMsg.tool_args,
+      tool_result: updatedMsg.tool_result,
+      tool_name: updatedMsg.tool_name
+    });
+    
     setMessages(prevMessages => 
-      prevMessages.map(msg => 
-        msg.id === updatedMsg.id ? { ...msg, ...updatedMsg } : msg
-      )
+      prevMessages.map(msg => {
+        if (msg.id === updatedMsg.id) {
+          return {
+            ...msg,
+            ...updatedMsg,
+            // Explicitly preserve tool-specific fields
+            tool_args: updatedMsg.tool_args || msg.tool_args,
+            tool_result: updatedMsg.tool_result || msg.tool_result,
+            tool_name: updatedMsg.tool_name || msg.tool_name,
+            tool_call_id: updatedMsg.tool_call_id || msg.tool_call_id
+          };
+        }
+        return msg;
+      })
     );
   };
 
