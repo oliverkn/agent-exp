@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 import logging
@@ -65,6 +65,22 @@ async def get_thread_messages(thread_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error fetching messages for thread {thread_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/api/threads/{thread_id}/get_thread_message/{message_id}")
+async def get_thread_message(thread_id: int, message_id: int, db: Session = Depends(get_db)):
+    try:
+        logger.info(f"Fetching message with ID: {message_id} for thread ID: {thread_id}")
+        message = db.query(Message).filter(Message.id == message_id, Message.thread_id == thread_id).first()
+        
+        if not message:
+            logger.error(f"Message with ID {message_id} not found for thread {thread_id}")
+            raise HTTPException(status_code=404, detail="Message not found")
+            
+        logger.info(f"Successfully fetched message with ID: {message_id} for thread {thread_id}")
+        return message
+    except Exception as e:
+        logger.error(f"Error fetching message with ID {message_id} for thread {thread_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.websocket("/ws/{thread_id}")
 async def websocket_endpoint(websocket: WebSocket, thread_id: int):
@@ -75,11 +91,14 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: int):
         
         try:
             while True:
-                # Keep the connection alive and wait for any disconnection
-                data = await websocket.receive_text()
-                logger.debug(f"Received WebSocket data: {data}")
-        except Exception as e:
-            logger.error(f"WebSocket error for thread {thread_id}: {str(e)}")
+                try:
+                    data = await websocket.receive_text()
+                    if data == "ping":
+                        await websocket.send_text("pong")
+                    logger.debug(f"Received WebSocket data: {data}")
+                except WebSocketDisconnect:
+                    logger.info(f"WebSocket disconnected for thread {thread_id}")
+                    break
         finally:
             logger.info(f"WebSocket connection ending for thread {thread_id}")
             await manager.disconnect(websocket, thread_id)
@@ -89,26 +108,24 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: int):
         await websocket.close()
 
 @router.post("/api/threads/{thread_id}/message")
-async def send_message(thread_id: int, message: dict, db: Session = Depends(get_db)):
+async def send_message(
+    thread_id: int, 
+    message: dict, 
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
     try:
         logger.info(f"Sending message to thread ID: {thread_id}")
         
         if thread_id not in agents:
             agents[thread_id] = Agent(thread_id)
-            
+        
+        # Handle the event with the agent in background task
         agent = agents[thread_id]
-        
-        # Handle the event with the agent
+        # background_tasks.add_task(agent.handle_event, Event(type=EventTypes.USER, data=message['content']))
         agent.handle_event(Event(type=EventTypes.USER, data=message['content']))
-        
-        # Notify all connected clients about the message update
-        await manager.broadcast_to_thread(thread_id, {
-            "type": "message_update",
-            "thread_id": thread_id
-        })
         
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Error sending message to thread {thread_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-

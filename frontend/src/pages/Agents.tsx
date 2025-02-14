@@ -42,6 +42,7 @@ export default function Agents() {
 
   useEffect(() => {
     let ws: WebSocket;
+    let pingInterval: NodeJS.Timeout;
     
     if (selectedThread) {
         const wsUrl = API_BASE_URL.replace('http://', 'ws://');
@@ -52,14 +53,42 @@ export default function Agents() {
             
             ws.onopen = () => {
                 console.log('WebSocket connected successfully');
+                // Start ping-pong to keep connection alive
+                pingInterval = setInterval(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send('ping');
+                    }
+                }, 30000); // Send ping every 30 seconds
             };
             
             ws.onmessage = async (event) => {
-                console.log('WebSocket message received:', event.data);
-                const data = JSON.parse(event.data);
-                if (data.type === 'message_update') {
-                    console.log('Message update received, fetching latest messages');
-                    await fetchThreadMessages(selectedThread.id);
+                try {
+                    console.log('Raw WebSocket message received:', event.data);
+                    
+                    // Skip parsing for ping-pong messages
+                    if (event.data === 'pong') {
+                        console.log('Received pong response');
+                        return;
+                    }
+                    
+                    const data = JSON.parse(event.data);
+                    console.log('Parsed WebSocket data:', data);
+                    
+                    // Handle both "type" and "event_type" formats
+                    const eventType = data.event_type || data.type;
+                    
+                    if (eventType === 'message_insert' && data.message) {
+                        console.log('New message received, adding to UI:', data.message);
+                        addMessage(data.message);
+                    } else if (eventType === 'message_update' && data.message) {
+                        console.log('Message update received, updating UI:', data.message);
+                        updateMessage(data.message);
+                    } else {
+                        console.log('Unhandled WebSocket message type:', data);
+                    }
+                } catch (error) {
+                    console.error('Error processing WebSocket message:', error);
+                    console.error('Raw message that caused error:', event.data);
                 }
             };
 
@@ -76,6 +105,9 @@ export default function Agents() {
     }
 
     return () => {
+        if (pingInterval) {
+            clearInterval(pingInterval);
+        }
         if (ws) {
             console.log('Cleaning up WebSocket connection');
             ws.close();
@@ -210,10 +242,60 @@ export default function Agents() {
     );
   };
 
+  const addMessage = (msg: Message) => {
+    setMessages(prevMessages => [...prevMessages, msg]);
+  };
+
+  const updateMessage = (updatedMsg: Message) => {
+    setMessages(prevMessages => 
+      prevMessages.map(msg => 
+        msg.id === updatedMsg.id ? { ...msg, ...updatedMsg } : msg
+      )
+    );
+  };
+
+  const handleThreadSelect = async (thread: Thread) => {
+    setSelectedThread(thread);
+    setMessages([]); // Clear existing messages
+    
+    try {
+        const response = await axios.get(
+            `${API_BASE_URL}/api/threads/${thread.id}/get_thread_messages`
+        );
+        response.data.forEach((msg: Message) => {
+            addMessage(msg);
+        });
+    } catch (error) {
+        console.error('Error fetching messages:', error);
+        setError('Failed to load messages');
+    }
+  };
+
+  const renderThreadList = () => (
+    <div className="space-y-2 overflow-y-auto">
+      {threads.map((thread) => (
+        <div
+          key={thread.id}
+          onClick={() => handleThreadSelect(thread)}
+          className={`p-3 rounded-md cursor-pointer ${
+            selectedThread?.id === thread.id
+              ? 'bg-blue-100'
+              : 'hover:bg-gray-100'
+          }`}
+        >
+          <h3 className="font-medium">{thread.title}</h3>
+          <p className="text-sm text-gray-500">
+            {new Date(thread.created_at).toLocaleDateString()}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div className="flex h-screen bg-gray-100">
       {/* Thread List Panel */}
-      <div className="w-1/4 bg-white border-r border-gray-200 p-4">
+      <div className="w-1/4 bg-white border-r border-gray-200 p-4 flex flex-col">
         <div className="mb-4">
           <input
             type="text"
@@ -232,24 +314,7 @@ export default function Agents() {
           {error && <div className="text-red-500 text-sm mt-2">{error}</div>}
         </div>
 
-        <div className="space-y-2">
-          {threads.map((thread) => (
-            <div
-              key={thread.id}
-              onClick={() => setSelectedThread(thread)}
-              className={`p-3 rounded-md cursor-pointer ${
-                selectedThread?.id === thread.id
-                  ? 'bg-blue-100'
-                  : 'hover:bg-gray-100'
-              }`}
-            >
-              <h3 className="font-medium">{thread.title}</h3>
-              <p className="text-sm text-gray-500">
-                {new Date(thread.created_at).toLocaleDateString()}
-              </p>
-            </div>
-          ))}
-        </div>
+        {renderThreadList()}
       </div>
 
       {/* Messages Panel */}
