@@ -224,7 +224,7 @@ export default function Agents() {
               {message.content && (
                 <div className="mb-2">
                   <span className="font-medium">Input: </span>
-                  {message.content}
+                  <ToolMessage message={message.content} />
                 </div>
               )}
               {message.tool_result && (
@@ -291,6 +291,16 @@ export default function Agents() {
       ))}
     </div>
   );
+
+  const ToolMessage = ({ message }: { message: string }) => {
+    return (
+      <div
+        dangerouslySetInnerHTML={{
+          __html: message
+        }}
+      />
+    );
+  };
 
   return (
     <div className="flex h-screen bg-gray-100">

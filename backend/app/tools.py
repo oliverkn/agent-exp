@@ -116,7 +116,7 @@ class AuthenticateMSGraph:
     args_model = Args
 
     async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
-         # Microsoft Graph API endpoints
+        # Microsoft Graph API endpoints
         AUTHORITY = f"https://login.microsoftonline.com/{global_state["ms_graph.tenant_id"]}"
         SCOPES = ["Mail.Read"]
 
@@ -131,8 +131,8 @@ class AuthenticateMSGraph:
             raise Exception("Failed to start device flow. Try again.")
 
         # Show user instructions
-        display_text += f"Please sign in at: {device_flow['verification_uri']}"
-        display_text += f"\nUse this code: {device_flow['user_code']}"
+        display_text += f"Please sign in at: <a href='{device_flow['verification_uri']}' target='_blank'>{device_flow['verification_uri']}</a><br>"
+        display_text += f"Use this code: <code style='font-family: monospace; background-color: #f0f0f0; padding: 2px 4px; border-radius: 4px;'>{device_flow['user_code']}</code>"
         on_update(ToolCallResult(result=None, state=ToolCallState.RUNNING, display_data=display_text))
 
         # Continuously check if the user has signed in
@@ -140,7 +140,7 @@ class AuthenticateMSGraph:
             token_response = app.acquire_token_by_device_flow(device_flow)
             
             if "access_token" in token_response:
-                display_text += "\n✅ Sign-in detected! Access token acquired."
+                display_text += "<br>✅ Sign-in detected! Access token acquired."
                 break
             elif "error" in token_response and token_response["error"] == "authorization_pending":
                 time.sleep(5)  # Wait and retry
