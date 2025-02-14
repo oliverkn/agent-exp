@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import type { Timeout } from 'node';
 import DOMPurify from 'dompurify';
@@ -76,18 +76,20 @@ const ToolMessage = ({ message }: { message: Message }) => {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
+      <div className="flex gap-2">
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="text-sm text-gray-600 hover:text-gray-800"
+          className="text-sm text-gray-600 hover:text-gray-800 flex-shrink-0"
         >
           {isExpanded ? '▼' : '▶'}
         </button>
-        <div className="w-full">
+        <div className="min-w-0 flex-1">
           <div className="font-medium">
             {message.tool_name || 'Tool'}
           </div>
-          {renderToolContent()}
+          <div className="whitespace-pre-wrap break-all">
+            {renderToolContent()}
+          </div>
         </div>
       </div>
 
@@ -96,13 +98,17 @@ const ToolMessage = ({ message }: { message: Message }) => {
           {message.tool_args && (
             <div className="p-2 bg-green-50 rounded">
               <span className="font-medium">Args: </span>
-              {message.tool_args}
+              <div className="whitespace-pre-wrap break-all">
+                {message.tool_args}
+              </div>
             </div>
           )}
           {message.tool_result && (
             <div className="p-2 bg-green-50 rounded">
               <span className="font-medium">Result: </span>
-              {message.tool_result}
+              <div className="whitespace-pre-wrap break-all">
+                {message.tool_result}
+              </div>
             </div>
           )}
         </div>
@@ -120,6 +126,16 @@ export default function Agents() {
   const [isLoading, setIsLoading] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Auto scroll when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   const API_BASE_URL = 'http://localhost:8000';
 
@@ -301,7 +317,7 @@ export default function Agents() {
     const messageClasses = {
       assistant: 'bg-blue-50 text-blue-800',
       tool: 'bg-green-50 text-green-800',
-      user: 'bg-gray-50 text-gray-800',
+      user: 'bg-gray-50 text-gray-800 whitespace-pre-wrap',
       developer: 'bg-purple-50 text-purple-800'
     };
 
@@ -446,6 +462,7 @@ export default function Agents() {
               {messages.map((message, index) => (
                 message && <div key={index}>{renderMessage(message)}</div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500">
@@ -472,14 +489,13 @@ export default function Agents() {
         {selectedThread && (
           <div className="p-4 border-t border-gray-200 bg-white">
             <div className="flex space-x-4">
-              <input
-                type="text"
+              <textarea
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 disabled={!isAwaitingInput}
                 placeholder={isAwaitingInput ? "Type your message..." : "Waiting for AI..."}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                onKeyPress={(e) => {
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 resize-none h-[40px] min-h-[40px] max-h-[200px] overflow-y-hidden"
+                onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
