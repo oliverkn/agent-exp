@@ -75,7 +75,7 @@ class Agent:
             schema = self._to_function_schema(tool)
             self.tools_schema.append(schema)
         
-        self._add_message(AgentState.AWAIT_INPUT, "developer", "Your task is to use the available tools to solve the any given tasks.")
+        self._add_message(AgentState.AWAIT_INPUT, "developer", "Your task is to use the available tools to solve the any given tasks. If you respond to the user, always respond in HTML format.")
         
     
     @staticmethod

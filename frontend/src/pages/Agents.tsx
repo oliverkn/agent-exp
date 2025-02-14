@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import type { Timeout } from 'node';
+import DOMPurify from 'dompurify';
 
 interface Thread {
   id: number;
@@ -17,6 +19,38 @@ interface Message {
   tool_call_id?: string;
   tool_result?: string;
 }
+
+const ToolMessage = ({ message }: { message: Message }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="text-sm text-gray-600 hover:text-gray-800"
+        >
+          {isExpanded ? '▼' : '▶'}
+        </button>
+        <div>
+          <div className="font-medium">
+            {message.tool_name || 'Tool'}
+          </div>
+          {message.content && (
+            <div className="mt-1" dangerouslySetInnerHTML={{ __html: message.content }} />
+          )}
+        </div>
+      </div>
+
+      {isExpanded && message.tool_result && (
+        <div className="ml-6 mt-2 p-2 bg-green-50 rounded">
+          <span className="font-medium">Result: </span>
+          {message.tool_result}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function Agents() {
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -42,7 +76,7 @@ export default function Agents() {
 
   useEffect(() => {
     let ws: WebSocket;
-    let pingInterval: NodeJS.Timeout;
+    let pingInterval: ReturnType<typeof setInterval>;
     
     if (selectedThread) {
         const wsUrl = API_BASE_URL.replace('http://', 'ws://');
@@ -198,8 +232,9 @@ export default function Agents() {
     messages[messages.length - 1].agent_state === 'await_input';
 
   const renderMessage = (message: Message) => {
-    // Skip assistant messages that are tool calls
-    if (message.role === 'assistant' && message.tool_call_id) {
+    // Skip assistant messages that are tool calls or have no content
+    if ((message.role === 'assistant' && message.tool_call_id) || 
+        (message.role === 'assistant' && !message.content)) {
       return null;
     }
 
@@ -210,34 +245,21 @@ export default function Agents() {
       developer: 'bg-purple-50 text-purple-800'
     };
 
+    const sanitizedContent = message.content ? DOMPurify.sanitize(message.content) : '';
+
     return (
       <div className={`p-4 rounded-lg mb-4 ${messageClasses[message.role]}`}>
-        <div className="font-medium capitalize">
-          {message.role === 'tool' && message.tool_name 
-            ? `${message.role} (${message.tool_name})`
-            : message.role
-          }
-        </div>
-        <div className="mt-2">
-          {message.role === 'tool' ? (
-            <>
-              {message.content && (
-                <div className="mb-2">
-                  <span className="font-medium">Input: </span>
-                  <ToolMessage message={message.content} />
-                </div>
-              )}
-              {message.tool_result && (
-                <div>
-                  <span className="font-medium">Result: </span>
-                  {message.tool_result}
-                </div>
-              )}
-            </>
-          ) : (
-            message.content
-          )}
-        </div>
+        {message.role === 'tool' ? (
+          <ToolMessage message={message} />
+        ) : (
+          <>
+            <div className="font-medium capitalize">{message.role}</div>
+            <div 
+              className="mt-2"
+              dangerouslySetInnerHTML={{ __html: sanitizedContent }}
+            />
+          </>
+        )}
       </div>
     );
   };
@@ -291,16 +313,6 @@ export default function Agents() {
       ))}
     </div>
   );
-
-  const ToolMessage = ({ message }: { message: string }) => {
-    return (
-      <div
-        dangerouslySetInnerHTML={{
-          __html: message
-        }}
-      />
-    );
-  };
 
   return (
     <div className="flex h-screen bg-gray-100">
