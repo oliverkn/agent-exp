@@ -340,6 +340,50 @@ class ViewPdfAttachment:
             state=ToolCallState.COMPLETED
         )
 
+class SaveEmailAttachment:
+    class Args(BaseModel):
+        email_id: str
+        attachment_name: str
+        file_name: str
+        
+    tool_name = "save_email_attachment"
+    tool_description = "Saves an attachment from an email to the local file system."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        headers = {"Authorization": f"Bearer {global_state['ms_graph.access_token']}"}
+        
+        # First get attachment metadata to get the id
+        metadata_url = f"https://graph.microsoft.com/v1.0/me/messages/{args.email_id}/attachments"
+        metadata_response = requests.get(metadata_url, headers=headers)
+        if metadata_response.status_code != 200:
+            raise Exception(f"Error fetching attachment metadata: {metadata_response.json()}")
+            
+        attachments = metadata_response.json().get("value", [])
+        attachment_id = None
+        for att in attachments:
+            if att["name"] == args.attachment_name:
+                attachment_id = att["id"]
+                break
+                
+        if not attachment_id:
+            raise Exception(f"Attachment {args.attachment_name} not found")
+        
+        # Download the attachment
+        download_url = f"https://graph.microsoft.com/v1.0/me/messages/{args.email_id}/attachments/{attachment_id}/$value"
+        response = requests.get(download_url, headers=headers)
+        
+        if response.status_code != 200:
+            raise Exception(f"Error downloading attachment: {response.status_code}")
+        
+        # Save the attachment to the working directory
+        with open(os.path.join(os.getenv("TOOLS_WORKING_DIR"), args.file_name), "wb") as f:
+            f.write(response.content)
+            
+        return ToolCallResult(
+            result=None,
+            state=ToolCallState.COMPLETED
+        )
 
 # class AuthorizeBexio:
 #     class Args(BaseModel):
@@ -666,4 +710,66 @@ class BexioUploadEmailAttachment:
                 result={"error": f"Error uploading to Bexio: {str(e)}"},
                 state=ToolCallState.ERROR
             )
+        
+class BexioUploadFile:
+    class Args(BaseModel):
+        file_name: str = Field(description="Name of the file in the working directory to upload")
+    
+    tool_name = "bexio_upload_file"
+    tool_description = "Uploads a file to Bexio."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        file_path = os.path.join(os.getenv("TOOLS_WORKING_DIR"), args.file_name)
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            return ToolCallResult(
+                result={"error": f"File {args.file_name} not found in working directory"},
+                state=ToolCallState.ERROR
+            )
+
+        # Set up headers for Bexio API
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
+        }
+
+        try:
+            # Open and prepare the file for upload
+            with open(file_path, 'rb') as file:
+                files = {
+                    'file': (args.file_name, file)
+                }
+                
+                # Upload to Bexio
+                response = requests.post(
+                    "https://api.bexio.com/3.0/files",
+                    headers=headers,  # Don't include Content-Type here, requests will set it automatically for multipart
+                    files=files
+                )
+                
+                if response.status_code in (200, 201):
+                    return ToolCallResult(
+                        result=response.json(),
+                        state=ToolCallState.COMPLETED,
+                        display_data=f"Successfully uploaded {args.file_name} to Bexio"
+                    )
+                else:
+                    return ToolCallResult(
+                        result={"error": f"Failed to upload to Bexio: {response.status_code} - {response.text}"},
+                        state=ToolCallState.ERROR
+                    )
+                    
+        except FileNotFoundError:
+            return ToolCallResult(
+                result={"error": f"File {args.file_name} could not be opened"},
+                state=ToolCallState.ERROR
+            )
+        except Exception as e:
+            return ToolCallResult(
+                result={"error": f"Error uploading file to Bexio: {str(e)}"},
+                state=ToolCallState.ERROR
+            )
+        
         
