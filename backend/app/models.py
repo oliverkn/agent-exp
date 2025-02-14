@@ -24,10 +24,11 @@ class Message(Base):
     thread_id = Column(Integer, ForeignKey("threads.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
-    api_message = Column(Text, nullable=False) # message for the API as json
+    api_messages = Column(Text, nullable=False) # list of message for the API as json
     
     agent_state = Column(String(10), nullable=False) # await_input, await_ai_response, await_tool_response
     role = Column(String(10), nullable=False) # user, agent, tool
+    content_type = Column(String(10), nullable=False, default="text") # text, image_url_list
     content = Column(Text, nullable=True) # used to display content in the UI
     
     # Tool related
@@ -40,3 +41,4 @@ class Message(Base):
     
     # Relationship with thread
     thread = relationship("Thread", back_populates="messages")
+

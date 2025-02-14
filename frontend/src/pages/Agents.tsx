@@ -13,6 +13,7 @@ interface Message {
   id: number;
   role: 'assistant' | 'tool' | 'user' | 'developer';
   content?: string;
+  content_type?: string;
   agent_state?: string;
   created_at: string;
   tool_name?: string;
@@ -23,6 +24,55 @@ interface Message {
 
 const ToolMessage = ({ message }: { message: Message }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  const renderToolContent = () => {
+    if (!message.content) return null;
+
+    // Handle view_pdf_attachment tool which returns images
+    if (message.tool_name === 'view_pdf_attachment' && message.content.startsWith('[')) {
+      try {
+        const imageUrls = JSON.parse(message.content);
+        return (
+          <>
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              {imageUrls.map((url: string, index: number) => (
+                <div key={index} className="relative cursor-pointer">
+                  <img 
+                    src={url} 
+                    alt={`PDF page ${index + 1}`}
+                    className="w-32 h-32 object-contain rounded-lg shadow-md hover:shadow-lg transition-shadow"
+                    loading="lazy"
+                    onClick={() => setSelectedImage(url)}
+                  />
+                </div>
+              ))}
+            </div>
+            {selectedImage && (
+              <div 
+                className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+                onClick={() => setSelectedImage(null)}
+              >
+                <img 
+                  src={selectedImage} 
+                  alt="Full size"
+                  className="max-w-full max-h-full object-contain"
+                />
+              </div>
+            )}
+          </>
+        );
+      } catch (e) {
+        console.error('Error parsing image URLs:', e);
+        return <div className="text-red-500">Error displaying PDF pages</div>;
+      }
+    }
+
+    // Default content rendering
+    return (
+      <div className="mt-1" dangerouslySetInnerHTML={{ __html: message.content }} />
+    );
+  };
 
   return (
     <div className="space-y-2">
@@ -33,13 +83,11 @@ const ToolMessage = ({ message }: { message: Message }) => {
         >
           {isExpanded ? '▼' : '▶'}
         </button>
-        <div>
+        <div className="w-full">
           <div className="font-medium">
             {message.tool_name || 'Tool'}
           </div>
-          {message.content && (
-            <div className="mt-1" dangerouslySetInnerHTML={{ __html: message.content }} />
-          )}
+          {renderToolContent()}
         </div>
       </div>
 
@@ -71,6 +119,7 @@ export default function Agents() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [newMessage, setNewMessage] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const API_BASE_URL = 'http://localhost:8000';
 
@@ -256,7 +305,44 @@ export default function Agents() {
       developer: 'bg-purple-50 text-purple-800'
     };
 
-    const sanitizedContent = message.content ? DOMPurify.sanitize(message.content) : '';
+    const renderContent = () => {
+      if (!message.content) return null;
+
+      if (message.content_type === 'image_url_list') {
+        try {
+          const imageUrls = JSON.parse(message.content);
+          return (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                {imageUrls.map((url: string, index: number) => (
+                  <div key={index} className="relative cursor-pointer">
+                    <img 
+                      src={url} 
+                      alt={`Generated image ${index + 1}`}
+                      className="w-32 h-32 object-contain rounded-lg shadow-md hover:shadow-lg transition-shadow"
+                      loading="lazy"
+                      onClick={() => setSelectedImage(url)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </>
+          );
+        } catch (e) {
+          console.error('Error parsing image URLs:', e);
+          return <div className="text-red-500">Error displaying images</div>;
+        }
+      }
+
+      const sanitizedContent = DOMPurify.sanitize(message.content);
+      return (
+        <div 
+          className="mt-2 break-words overflow-hidden overflow-wrap-anywhere"
+          style={{ wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}
+          dangerouslySetInnerHTML={{ __html: sanitizedContent }}
+        />
+      );
+    };
 
     return (
       <div className={`p-4 rounded-lg mb-4 ${messageClasses[message.role]} max-w-full`}>
@@ -265,11 +351,7 @@ export default function Agents() {
         ) : (
           <>
             <div className="font-medium capitalize">{message.role}</div>
-            <div 
-              className="mt-2 break-words overflow-hidden overflow-wrap-anywhere"
-              style={{ wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}
-              dangerouslySetInnerHTML={{ __html: sanitizedContent }}
-            />
+            {renderContent()}
           </>
         )}
       </div>
@@ -368,6 +450,20 @@ export default function Agents() {
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500">
               Select a thread to view messages
+            </div>
+          )}
+          
+          {/* Image Modal */}
+          {selectedImage && (
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+              onClick={() => setSelectedImage(null)}
+            >
+              <img 
+                src={selectedImage} 
+                alt="Full size"
+                className="max-w-full max-h-full object-contain"
+              />
             </div>
           )}
         </div>

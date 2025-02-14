@@ -12,3 +12,7 @@ msal
 openai
 websockets
 pyee
+
+# PDF
+Pillow
+PyMuPDF

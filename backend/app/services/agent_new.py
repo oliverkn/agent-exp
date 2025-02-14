@@ -104,7 +104,7 @@ class Agent:
                 tool_choice="auto",
                 parallel_tool_calls=False,
                 temperature=0.0,
-                max_tokens=2000
+                max_tokens=5000
             )
             self.logger.debug(completion.choices[0].message)
             return completion
@@ -117,7 +117,7 @@ class Agent:
         with db.SessionLocal() as session:
             db_message = Message(
                 thread_id=self.thread_id,
-                api_message=json.dumps({"role": role, "content": content}),
+                api_messages=json.dumps([{"role": role, "content": content}]),
                 agent_state=agent_state.value,
                 role=role,
                 content=content
@@ -133,7 +133,7 @@ class Agent:
         with db.SessionLocal() as session:
             db_message = Message(
                 thread_id=self.thread_id,
-                api_message=json.dumps({"role": "user", "content": msg}),
+                api_messages=json.dumps([{"role": "user", "content": msg}]),
                 agent_state=AgentState.AWAIT_AI_RESPONSE.value,
                 role="user",
                 content=msg
@@ -156,7 +156,7 @@ class Agent:
         with db.SessionLocal() as session:
             db_message = Message(
                 thread_id=self.thread_id,
-                api_message=json.dumps(msg.dict()),
+                api_messages=json.dumps([msg.dict()]),
                 agent_state=agent_state.value,
                 role=msg.role,
                 content=msg.content
@@ -176,7 +176,7 @@ class Agent:
         with db.SessionLocal() as session:
             db_message = Message(
                 thread_id=self.thread_id,
-                api_message=json.dumps(api_message),
+                api_messages=json.dumps([api_message]),
                 agent_state=AgentState.AWAIT_TOOL_RESPONSE.value,
                 role="tool",
                 tool_call_id=tool_call_id,
@@ -215,40 +215,38 @@ class Agent:
             if not db_message:
                 raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
         
+            api_messages = []
+        
             if tool_call_result.result_type == "text":
                 content = json.dumps(tool_call_result.result)
+                api_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(tool_call_result.result)})
+                db_message.tool_result = content
+                db_message.content = tool_call_result.display_data
+                db_message.content_type = "text"
+                
             elif tool_call_result.result_type == "base64_png_list":
-                content = "success: image will be included in the subsequent message"
+                api_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": f"{len(tool_call_result.result)} images will be included in the next message"})
+                api_messages.append({
+                    "role": "user", 
+                    "content": [{
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{base64_image}",
+                            "detail": "high"
+                        }
+                    } for base64_image in tool_call_result.result]
+                })
+                
+                db_message.tool_result = f"{len(tool_call_result.result)} images"
+                db_message.content_type = "image_url_list"
+                db_message.content = json.dumps([f"data:image/png;base64,{base64_image}" for base64_image in tool_call_result.result])
+                
             else:
                 raise Exception(f"Invalid result type: {tool_call_result.result_type}")
         
-            db_message.api_message = json.dumps({
-                "role": "tool", 
-                "tool_call_id": tool_call_id, 
-                "content": content
-            })
+            db_message.api_messages = json.dumps(api_messages)
             db_message.agent_state = AgentState.AWAIT_AI_RESPONSE.value
-            db_message.content = tool_call_result.display_data
-            db_message.tool_result = json.dumps(tool_call_result.result)
-            db_message.tool_state = tool_call_result.state.value
-            db_message.tool_display_data = tool_call_result.display_data
-            
-            if tool_call_result.result_type == "base64_png_list":
-                img_content = [{"type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{base64_image}",
-                                    "detail": "high"
-                                    }
-                            } for base64_image in tool_call_result.result]
-                
-                db_message_img = Message(
-                    thread_id=self.thread_id,
-                    api_message=json.dumps({"role": "user", "content": img_content}),
-                    agent_state=AgentState.AWAIT_AI_RESPONSE.value,
-                    role="tool",
-                    content="Image from the tool call"
-                )
-                session.add(db_message_img)
+            db_message.tool_state = tool_call_result.state.value            
             
             session.commit()
         
@@ -265,7 +263,14 @@ class Agent:
     def _get_api_messages(self):
         with db.SessionLocal() as session:
             db_message_list = session.query(Message).filter(Message.thread_id == self.thread_id).order_by(Message.created_at).all()
-            return [json.loads(msg.api_message) for msg in db_message_list]
+            messages = []
+            for msg in db_message_list:
+                api_messages = json.loads(msg.api_messages)
+                if isinstance(api_messages, list):
+                    messages.extend(api_messages)
+                else:
+                    messages.append(api_messages)
+            return messages
     
     def _cancel_current_task(self):
         if self.current_task is not None:
