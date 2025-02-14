@@ -64,11 +64,11 @@ class Agent:
         self.current_task = None
         
         self.tool_box = ToolBox(db)
-        # self.tool_box.add_tool(UserInput())
-        # self.tool_box.add_tool(UserInputCMD())
         self.tool_box.add_tool(SetupMSGraph())
         self.tool_box.add_tool(AuthenticateMSGraph())
         self.tool_box.add_tool(GetLatestEmail())
+        self.tool_box.add_tool(ListEmails())
+        self.tool_box.add_tool(ViewPdfAttachment())
         
         self.tools_schema = []
         for tool in self.tool_box.get_tools():
@@ -102,7 +102,9 @@ class Agent:
                 messages=self._get_api_messages(),
                 tools=self.tools_schema,
                 tool_choice="auto",
-                parallel_tool_calls=False
+                parallel_tool_calls=False,
+                temperature=0.0,
+                max_tokens=2000
             )
             self.logger.debug(completion.choices[0].message)
             return completion
@@ -213,16 +215,40 @@ class Agent:
             if not db_message:
                 raise Exception(f"Tool call message not found for tool_call_id: {tool_call_id}")
         
+            if tool_call_result.result_type == "text":
+                content = json.dumps(tool_call_result.result)
+            elif tool_call_result.result_type == "base64_png_list":
+                content = "success: image will be included in the subsequent message"
+            else:
+                raise Exception(f"Invalid result type: {tool_call_result.result_type}")
+        
             db_message.api_message = json.dumps({
                 "role": "tool", 
                 "tool_call_id": tool_call_id, 
-                "content": json.dumps(tool_call_result.result)
+                "content": content
             })
             db_message.agent_state = AgentState.AWAIT_AI_RESPONSE.value
             db_message.content = tool_call_result.display_data
             db_message.tool_result = json.dumps(tool_call_result.result)
             db_message.tool_state = tool_call_result.state.value
             db_message.tool_display_data = tool_call_result.display_data
+            
+            if tool_call_result.result_type == "base64_png_list":
+                img_content = [{"type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{base64_image}",
+                                    "detail": "high"
+                                    }
+                            } for base64_image in tool_call_result.result]
+                
+                db_message_img = Message(
+                    thread_id=self.thread_id,
+                    api_message=json.dumps({"role": "user", "content": img_content}),
+                    agent_state=AgentState.AWAIT_AI_RESPONSE.value,
+                    role="tool",
+                    content="Image from the tool call"
+                )
+                session.add(db_message_img)
             
             session.commit()
         

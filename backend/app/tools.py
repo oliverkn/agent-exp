@@ -2,8 +2,8 @@ import requests
 import msal
 import os
 from datetime import datetime, timedelta
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal
+from pydantic import BaseModel, Field
 import asyncio
 import time
 import tkinter as tk
@@ -21,8 +21,9 @@ class ToolCallState(Enum):
     
 
 class ToolCallResult(BaseModel):
-    result: object | None = None
     state: ToolCallState
+    result_type: Literal["text", "base64_png_list"] = "text"
+    result: object | None = None
     display_data: str | None = None
     
 
@@ -173,3 +174,149 @@ class GetLatestEmail:
             raise Exception(f"Error: {response.json()}")
 
         return ToolCallResult(result={"subject": emails[0]["subject"], "from": emails[0]["from"]["emailAddress"]["address"], "receivedDateTime": emails[0]["receivedDateTime"], "bodyPreview": emails[0]["bodyPreview"]}, state=ToolCallState.COMPLETED)
+    
+class ListEmails:
+    class Args(BaseModel):
+        not_older_than_days: int = Field(description="The number of days to look back for emails. Must be greater than 0.")
+        only_has_attachments: bool = Field(description="If True, only emails with attachments will be returned.")
+        
+    tool_name = "list_emails"
+    tool_description = "This tool is used to list emails from the user's inbox."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        headers = {"Authorization": f"Bearer {global_state['ms_graph.access_token']}"}
+        GRAPH_API_URL = "https://graph.microsoft.com/v1.0/me/messages"
+        
+        # Calculate the date filter
+        filter_date = datetime.now() - timedelta(days=args.not_older_than_days)
+        filter_date_str = filter_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        # Build query parameters - using bodyPreview instead of body
+        params = {
+            "$select": "id,subject,from,receivedDateTime,hasAttachments,bodyPreview,attachments",
+            "$orderby": "receivedDateTime desc",
+            "$filter": f"receivedDateTime ge {filter_date_str}",
+            "$expand": "attachments($select=name)",  # Include attachment data
+            "$top": 50  # Number of items per page
+        }
+        
+        if args.only_has_attachments:
+            params["$filter"] += " and hasAttachments eq true"
+        
+        all_emails = []
+        
+        while True:
+            # Make the API request
+            response = requests.get(GRAPH_API_URL, headers=headers, params=params)
+            
+            if response.status_code != 200:
+                raise Exception(f"Error fetching emails: {response.json()}")
+            
+            response_data = response.json()
+            emails = response_data.get("value", [])
+            
+            # Format and add emails from this page - using bodyPreview
+            email_list = [{
+                "id": email["id"],
+                "subject": email["subject"],
+                "from": email["from"]["emailAddress"]["address"],
+                "receivedDateTime": email["receivedDateTime"],
+                "hasAttachments": email["hasAttachments"],
+                "bodyPreview": email["bodyPreview"],  # Using preview instead of full body
+                "attachments": [att["name"] for att in email.get("attachments", [])]
+            } for email in emails]
+            
+            all_emails.extend(email_list)
+            
+            # Check if there are more pages
+            if "@odata.nextLink" not in response_data:
+                break
+                
+            # Update URL for next page
+            GRAPH_API_URL = response_data["@odata.nextLink"]
+            params = {}  # Parameters are included in the nextLink URL
+            
+            # Optional: Update progress
+            on_update(ToolCallResult(
+                state=ToolCallState.RUNNING,
+                display_data=f"Fetched {len(all_emails)} emails so far..."
+            ))
+        
+        return ToolCallResult(
+            result=all_emails,
+            state=ToolCallState.COMPLETED,
+            display_data=f"Fetched {len(all_emails)} emails so far..."
+        )
+
+def pdf_to_base64_png(pdf_byte_buffer, page_limit=10, dpi=200):
+    """Returns a list of base64 encoded PNG images of the PDF pages."""
+    import fitz as pymupdf
+    import io
+    from PIL import Image
+    import base64
+
+    pdf_document = pymupdf.open(stream=pdf_byte_buffer, filetype="pdf")
+    base64_images = []
+
+    # Calculate the zoom factor based on DPI
+    zoom = dpi / 72  # 72 is the default DPI for PDFs
+    mat = pymupdf.Matrix(zoom, zoom)
+
+    for page_num in range(min(len(pdf_document), page_limit)):
+        page = pdf_document.load_page(page_num)
+        pix = page.get_pixmap(matrix=mat)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        base64_images.append(base64.b64encode(buffer.getvalue()).decode("utf-8"))
+
+    pdf_document.close()
+
+    return base64_images
+
+class ViewPdfAttachment:
+    class Args(BaseModel):
+        email_id: str
+        attachment_name: str
+        n_pages: int = Field(description="The number of pages to view. Must be greater than 0.")
+        
+    tool_name = "view_pdf_attachment"
+    tool_description = "This tool is used to view first n pages of a PDF attachment from an email."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        headers = {"Authorization": f"Bearer {global_state['ms_graph.access_token']}"}
+        
+        # First get attachment metadata to get the id
+        metadata_url = f"https://graph.microsoft.com/v1.0/me/messages/{args.email_id}/attachments"
+        metadata_response = requests.get(metadata_url, headers=headers)
+        if metadata_response.status_code != 200:
+            raise Exception(f"Error fetching attachment metadata: {metadata_response.json()}")
+            
+        attachments = metadata_response.json().get("value", [])
+        attachment_id = None
+        for att in attachments:
+            if att["name"] == args.attachment_name:
+                attachment_id = att["id"]
+                break
+                
+        if not attachment_id:
+            raise Exception(f"Attachment {args.attachment_name} not found")
+        
+        # Download the attachment
+        download_url = f"https://graph.microsoft.com/v1.0/me/messages/{args.email_id}/attachments/{attachment_id}/$value"
+        response = requests.get(download_url, headers=headers)
+        
+        if response.status_code != 200:
+            raise Exception(f"Error downloading attachment: {response.status_code}")
+        
+        # Convert PDF to base64 images
+        images = pdf_to_base64_png(response.content, page_limit=args.n_pages)
+        
+        return ToolCallResult(
+            result_type="base64_png_list",
+            result=images,
+            state=ToolCallState.COMPLETED
+        )

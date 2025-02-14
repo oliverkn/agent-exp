@@ -18,6 +18,7 @@ interface Message {
   tool_name?: string;
   tool_call_id?: string;
   tool_result?: string;
+  tool_args?: string;
 }
 
 const ToolMessage = ({ message }: { message: Message }) => {
@@ -42,10 +43,20 @@ const ToolMessage = ({ message }: { message: Message }) => {
         </div>
       </div>
 
-      {isExpanded && message.tool_result && (
-        <div className="ml-6 mt-2 p-2 bg-green-50 rounded">
-          <span className="font-medium">Result: </span>
-          {message.tool_result}
+      {isExpanded && (
+        <div className="ml-6 mt-2 space-y-2">
+          {message.tool_args && (
+            <div className="p-2 bg-green-50 rounded">
+              <span className="font-medium">Args: </span>
+              {message.tool_args}
+            </div>
+          )}
+          {message.tool_result && (
+            <div className="p-2 bg-green-50 rounded">
+              <span className="font-medium">Result: </span>
+              {message.tool_result}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -248,14 +259,15 @@ export default function Agents() {
     const sanitizedContent = message.content ? DOMPurify.sanitize(message.content) : '';
 
     return (
-      <div className={`p-4 rounded-lg mb-4 ${messageClasses[message.role]}`}>
+      <div className={`p-4 rounded-lg mb-4 ${messageClasses[message.role]} max-w-full`}>
         {message.role === 'tool' ? (
           <ToolMessage message={message} />
         ) : (
           <>
             <div className="font-medium capitalize">{message.role}</div>
             <div 
-              className="mt-2"
+              className="mt-2 break-words overflow-hidden overflow-wrap-anywhere"
+              style={{ wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}
               dangerouslySetInnerHTML={{ __html: sanitizedContent }}
             />
           </>
