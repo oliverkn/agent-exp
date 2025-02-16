@@ -312,7 +312,8 @@ export default function Agents() {
   const renderMessage = (message: Message) => {
     // Skip assistant messages that are tool calls or have no content
     if ((message.role === 'assistant' && message.tool_call_id) || 
-        (message.role === 'assistant' && !message.content)) {
+        (message.role === 'assistant' && !message.content) ||
+        message.role === 'developer') {  // Skip developer messages
       return null;
     }
 
@@ -320,7 +321,6 @@ export default function Agents() {
       assistant: 'bg-blue-50 text-blue-800',
       tool: 'bg-green-50 text-green-800',
       user: 'bg-gray-50 text-gray-800 whitespace-pre-wrap',
-      developer: 'bg-purple-50 text-purple-800'
     };
 
     const renderContent = () => {
