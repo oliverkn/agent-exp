@@ -276,7 +276,9 @@ function App() {
     <div className="app-wrapper">
       <div className="app-container">
         <h1>Welcome to Omakase</h1>
-        <h2>To automate a process just start recording it</h2>
+        {!recording && recordedChunks.length === 0 && (
+          <h2>To automate a process just start recording it</h2>
+        )}
         <div className="controls">
           {!recording && recordedChunks.length === 0 ? (
             <button onClick={startRecording}>Start Recording</button>

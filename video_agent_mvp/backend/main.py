@@ -34,7 +34,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-001')
 
 # Constants
-CHUNK_PROCESS_INTERVAL = 2
+CHUNK_PROCESS_INTERVAL = 5
 RATE_LIMIT_REQUESTS = 2000
 RATE_LIMIT_WINDOW = 60
 
@@ -169,40 +169,55 @@ async def websocket_endpoint(websocket: WebSocket):
     chat = model.start_chat(history=[])
     buffer = io.BytesIO()
     chunk_count = 0
-    last_response = None
-    last_request_time = None
-    min_request_interval = 0.03
+    last_analysis_time = datetime.now()
+    analysis_interval = timedelta(seconds=CHUNK_PROCESS_INTERVAL)
+    recording_active = True
+    live_stream_analysis_active = False # To be activated when Gemini API supports live stream analysis
     
     try:
-        while True:
+        while recording_active:
             try:
                 # Check if it's a binary message (video data) or text message (control)
                 message = await websocket.receive()
                 
                 if 'bytes' in message:
                     data = message['bytes']
-                    if not data:
-                        continue
-                    
-                    buffer.write(data)
-                    chunk_count += 1
-                    
+                    if data:  # Only write if we have data
+                        buffer.write(data)
+                        chunk_count += 1
+                        
+                        # Only perform live analysis if enabled
+                        if live_stream_analysis_active:
+                            current_time = datetime.now()
+                            if current_time - last_analysis_time >= analysis_interval:
+                                video_data = buffer.getvalue()
+                                if video_data:
+                                    analysis = await analyzer.analyze_live_stream(chat, video_data)
+                                    if analysis:
+                                        await websocket.send_json(analysis)
+                                last_analysis_time = current_time
+                
                 elif 'text' in message:
                     data = json.loads(message['text'])
                     if data.get('type') == 'stop_recording':
+                        recording_active = False
                         # Generate final summary when stop is received
                         video_data = buffer.getvalue()
                         if video_data:
+                            logger.info("Generating final summary...")
                             summary = await analyzer.create_final_summary(chat, video_data)
                             if summary:
                                 await websocket.send_json(summary)
-                        continue
+                                logger.info("Final summary sent")
+                            else:
+                                logger.error("Failed to generate final summary")
+                        break
                 
             except WebSocketDisconnect:
                 break
                 
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
     finally:
         buffer.close()
 
