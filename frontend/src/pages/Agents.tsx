@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import type { Timeout } from 'node';
 import DOMPurify from 'dompurify';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Thread {
   id: number;
@@ -30,7 +32,7 @@ const ToolMessage = ({ message }: { message: Message }) => {
     if (!message.content) return null;
 
     // Handle view_pdf_attachment tool which returns images
-    if (message.tool_name === 'view_pdf_attachment' && message.content.startsWith('[')) {
+    if (message.content_type === 'image_url_list') {
       try {
         const imageUrls = JSON.parse(message.content);
         return (
@@ -310,7 +312,8 @@ export default function Agents() {
   const renderMessage = (message: Message) => {
     // Skip assistant messages that are tool calls or have no content
     if ((message.role === 'assistant' && message.tool_call_id) || 
-        (message.role === 'assistant' && !message.content)) {
+        (message.role === 'assistant' && !message.content) ||
+        message.role === 'developer') {  // Skip developer messages
       return null;
     }
 
@@ -318,7 +321,6 @@ export default function Agents() {
       assistant: 'bg-blue-50 text-blue-800',
       tool: 'bg-green-50 text-green-800',
       user: 'bg-gray-50 text-gray-800 whitespace-pre-wrap',
-      developer: 'bg-purple-50 text-purple-800'
     };
 
     const renderContent = () => {
@@ -350,6 +352,47 @@ export default function Agents() {
         }
       }
 
+      // For assistant messages, use ReactMarkdown with GFM support
+      if (message.role === 'assistant') {
+        return (
+          <div className="prose prose-blue max-w-none prose-pre:bg-gray-800 prose-pre:text-white prose-pre:p-4 prose-pre:rounded-lg">
+            <ReactMarkdown 
+              children={message.content}
+              remarkPlugins={[remarkGfm]}
+              components={{
+                table: ({children}) => (
+                  <table className="border-collapse border border-gray-300 my-4">{children}</table>
+                ),
+                thead: ({children}) => <thead>{children}</thead>,
+                tbody: ({children}) => <tbody>{children}</tbody>,
+                tr: ({children}) => <tr>{children}</tr>,
+                th: ({children}) => (
+                  <th className="border border-gray-300 px-4 py-2 bg-gray-100">{children}</th>
+                ),
+                td: ({children}) => (
+                  <td className="border border-gray-300 px-4 py-2">{children}</td>
+                ),
+                code: ({node, inline, className, children, ...props}) => {
+                  const match = /language-(\w+)/.exec(className || '');
+                  return !inline ? (
+                    <pre className="bg-gray-800 text-white p-4 rounded-lg">
+                      <code className={className} {...props}>
+                        {children}
+                      </code>
+                    </pre>
+                  ) : (
+                    <code className="bg-gray-100 rounded px-1" {...props}>
+                      {children}
+                    </code>
+                  );
+                }
+              }}
+            />
+          </div>
+        );
+      }
+
+      // For other message types, keep the existing sanitized HTML rendering
       const sanitizedContent = DOMPurify.sanitize(message.content);
       return (
         <div 

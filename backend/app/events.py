@@ -16,6 +16,7 @@ def setup_db_events(db):
             message_dict = {
                 "id": message.id,
                 "role": message.role,
+                "content_type": message.content_type if message.content_type is not None else None,
                 "content": message.content if message.content is not None else None,
                 "agent_state": message.agent_state if message.agent_state is not None else None,
                 "created_at": str(message.created_at),

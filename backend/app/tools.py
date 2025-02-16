@@ -340,6 +340,29 @@ class ViewPdfAttachment:
             state=ToolCallState.COMPLETED
         )
 
+class ViewPdfFile:
+    class Args(BaseModel):
+        file_name: str
+        n_pages: int = Field(description="The number of pages to view. Must be greater than 0.")
+        
+    tool_name = "view_pdf_file"
+    tool_description = "This tool is used to view a PDF file."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        with open(os.path.join(os.getenv("TOOLS_WORKING_DIR"), args.file_name), "rb") as f:
+            file_content = f.read()
+        
+        # Convert PDF to base64 images
+        images = pdf_to_base64_png(file_content, page_limit=args.n_pages)
+        
+        return ToolCallResult(
+            result_type="base64_png_list",
+            result=images,
+            state=ToolCallState.COMPLETED
+        )
+            
+            
 class SaveEmailAttachment:
     class Args(BaseModel):
         email_id: str
@@ -396,6 +419,67 @@ class SaveEmailAttachment:
 #     tool_description = "This tool is used to authorize the Bexio API."
 #     args_model = Args
 
+class BexioListAccounts:
+    class Args(BaseModel):
+        account_type: Literal["active", "passive", "expense", "income", "complete", "all"] = Field(description="The type of accounts to list. Can be 'active', 'passive', 'expense', 'income', 'complete', 'all'.")
+    
+    tool_name = "bexio_list_accounts"
+    tool_description = "Lists all accounts from Bexio."
+    args_model = Args
+
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
+        }
+
+        try:
+            response = requests.get("https://api.bexio.com/2.0/accounts", headers=headers)
+            
+            if response.status_code == 200:
+                accounts = response.json()
+                
+                # filter accounts (is_active=true)
+                accounts = [account for account in accounts if account["is_active"]]
+                # translate account_type to account_type_id
+                account_type_encoding = {
+                    1: "income",
+                    2: "expense",
+                    3: "active",
+                    4: "passive",
+                    5: "complete"
+                }
+            
+                simplified_accounts = [
+                    {
+                        "id": account["id"],
+                        "account_no": account["account_no"],
+                        "name": account["name"],  
+                        "account_type": account_type_encoding[account["account_type"]],
+                    }
+                    for account in accounts
+                ]
+                
+                # filter accounts by account_type
+                if args.account_type != "all":
+                    simplified_accounts = [account for account in simplified_accounts if account["account_type"] == args.account_type]
+                
+                return ToolCallResult(
+                    result=simplified_accounts,
+                    state=ToolCallState.COMPLETED
+                )
+            else:
+                return ToolCallResult(
+                    result={"error": f"Failed to fetch accounts: {response.status_code} - {response.text}"},
+                    state=ToolCallState.ERROR
+                )
+                
+        except Exception as e:
+            return ToolCallResult(
+                result={"error": f"Error fetching accounts: {str(e)}"},
+                state=ToolCallState.ERROR
+            )
+            
 class BexioGetContacts:
     class Args(BaseModel):
         pass
@@ -511,127 +595,84 @@ class BexioCreateContact:
                 state=ToolCallState.ERROR
             )
         
-# class BexioCreateInvoicePayable:
-#     class Address(BaseModel):
-#         lastname_company: str
-#         address_line: str
-#         postcode: str
-#         city: str
-#         country_code: str = "CH"
         
-#     class LineItem(BaseModel):
-#         title: str
-#         amount: float
-#         tax_id: int
-#         booking_account_id: int
-#         position: int | None = None
+class BexioCreateInvoicePayable:
+    class Args(BaseModel):
+        vendor_contact_id: int = Field(description="ID of the contact that represents the vendor")
+        invoice_date: str = Field(description="Date of the invoice (YYYY-MM-DD)")
+        due_date: str = Field(description="Due date of the invoice (YYYY-MM-DD)")
+        currency_code: str = Field(description="Currency code (e.g. CHF, EUR)")
+        file_id: list[str] = Field(description="File id of the invoice PDF")
+        vendor_name: str = Field(description="Name of the vendor")
+        invoice_total_gross: float
+        expense_account_id: int = Field(description="ID of the expense account onto which the invoice will be booked")
         
-#     class Payment(BaseModel):
-#         type: Literal["IBAN"] = "IBAN"
-#         iban: str
-#         name: str
-#         address: str
-#         postcode: str
-#         city: str
-#         country_code: str = "CH"
-#         execution_date: str | None = None
-#         message: str | None = None
-        
-#     class Args(BaseModel):
-#         supplier_id: int = Field(description="ID of the contact that represents the supplier")
-#         title: str = Field(description="Title of the bill")
-#         bill_date: str = Field(description="Date of the bill (YYYY-MM-DD)")
-#         due_date: str = Field(description="Due date of the bill (YYYY-MM-DD)")
-#         currency_code: str = Field(default="CHF", description="Currency code (default: CHF)")
-#         address: Address = Field(description="Address information of the supplier")
-#         line_items: list[LineItem] = Field(description="List of line items for the bill")
-#         payment: Payment = Field(description="Payment information")
-#         vendor_ref: str | None = Field(default=None, description="Reference text from vendor")
-#         attachment_ids: list[str] | None = Field(default=None, description="List of attachment IDs")
-    
-#     tool_name = "bexio_create_invoice_payable"
-#     tool_description = "Creates a new invoice payable in Bexio with the specified information."
-#     args_model = Args
-    
-#     async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
-#         headers = {
-#             "Accept": "application/json",
-#             "Content-Type": "application/json",
-#             "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
-#         }
-
-#         # Calculate total amount from line items
-#         total_amount = sum(item.amount for item in args.line_items)
-
-#         # Assign positions to line items if not provided
-#         for i, item in enumerate(args.line_items):
-#             if item.position is None:
-#                 item.position = i
-
-#         # Construct the payload
-#         payload = {
-#             "supplier_id": args.supplier_id,
-#             "title": args.title,
-#             "bill_date": args.bill_date,
-#             "due_date": args.due_date,
-#             "currency_code": args.currency_code,
-#             "amount_calc": total_amount,
-#             "manual_amount": False,
-#             "item_net": False,
-#             "address": {
-#                 "lastname_company": args.address.lastname_company,
-#                 "address_line": args.address.address_line,
-#                 "postcode": args.address.postcode,
-#                 "city": args.address.city,
-#                 "country_code": args.address.country_code,
-#                 "type": "PRIVATE"
-#             },
-#             "line_items": [item.model_dump(exclude_none=True) for item in args.line_items],
-#             "payment": {
-#                 "type": args.payment.type,
-#                 "iban": args.payment.iban,
-#                 "name": args.payment.name,
-#                 "address": args.payment.address,
-#                 "postcode": args.payment.postcode,
-#                 "city": args.payment.city,
-#                 "country_code": args.payment.country_code
-#             }
-#         }
-
-#         # Add optional fields
-#         if args.vendor_ref:
-#             payload["vendor_ref"] = args.vendor_ref
-#         if args.attachment_ids:
-#             payload["attachment_ids"] = args.attachment_ids
-#         if args.payment.execution_date:
-#             payload["payment"]["execution_date"] = args.payment.execution_date
-#         if args.payment.message:
-#             payload["payment"]["message"] = args.payment.message
-
-#         try:
-#             response = requests.post(
-#                 "https://api.bexio.com/4.0/purchase/bills",
-#                 json=payload,
-#                 headers=headers
-#             )
             
-#             if response.status_code in (200, 201):
-#                 return ToolCallResult(
-#                     result=response.json(),
-#                     state=ToolCallState.COMPLETED
-#                 )
-#             else:
-#                 return ToolCallResult(
-#                     result={"error": f"Failed to create invoice: {response.status_code} - {response.text}"},
-#                     state=ToolCallState.ERROR
-#                 )
+    tool_name = "bexio_create_invoice_payable"
+    tool_description = "Creates a new invoice payable in Bexio."
+    args_model = Args
+    
+    async def run(self, args: Args, global_state: dict, on_update) -> ToolCallResult:
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv('BEXIO_PAT')}"
+        }
+        
+        # Construct the payload based on the provided arguments
+        payload = {
+            "supplier_id": args.vendor_contact_id,
+            "contact_partner_id": args.vendor_contact_id,
+            "bill_date": args.invoice_date,
+            "due_date": args.due_date,
+            "amount_man": args.invoice_total_gross,
+            "manual_amount": True, 
+            "currency_code": args.currency_code,
+            "item_net": False,
+            "attachment_ids": [args.file_id],
+            "address": {
+                "lastname_company": args.vendor_name,
+                "type": "PRIVATE"
+            },
+            "line_items": [
+                {
+                    "position": 0,
+                    "amount": args.invoice_total_gross,
+                    "booking_account_id": args.expense_account_id
+                }
+            ],
+            "discounts": []
+        }
+        
+        # Add attachment IDs if provided
+        if args.file_id:
+            payload["attachment_ids"] = args.file_id
+            
+        try:
+            response = requests.post(
+                "https://api.bexio.com/4.0/purchase/bills",
+                json=payload,
+                headers=headers
+            )
+            
+            if response.status_code in (200, 201):
+                return ToolCallResult(
+                    result=response.json(),
+                    state=ToolCallState.COMPLETED,
+                    display_data=f"Successfully created invoice payable for {args.vendor_name}"
+                )
+            else:
+                return ToolCallResult(
+                    result={"error": f"Failed to create invoice payable: {response.status_code} - {response.text}"},
+                    state=ToolCallState.ERROR
+                )
                 
-#         except Exception as e:
-#             return ToolCallResult(
-#                 result={"error": f"Error creating invoice: {str(e)}"},
-#                 state=ToolCallState.ERROR
-#             )
-            
+        except Exception as e:
+            return ToolCallResult(
+                result={"error": f"Error creating invoice payable: {str(e)}"},
+                state=ToolCallState.ERROR
+            )
+
 class BexioUploadEmailAttachment:
     class Args(BaseModel):
         email_id: str = Field(description="ID of the email containing the attachment")
