@@ -30,7 +30,7 @@ const ToolMessage = ({ message }: { message: Message }) => {
     if (!message.content) return null;
 
     // Handle view_pdf_attachment tool which returns images
-    if (message.tool_name === 'view_pdf_attachment' && message.content.startsWith('[')) {
+    if (message.content_type === 'image_url_list') {
       try {
         const imageUrls = JSON.parse(message.content);
         return (

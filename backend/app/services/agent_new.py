@@ -60,6 +60,7 @@ class Agent:
         self.timeout = 60.0 # seconds
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.model = "gpt-4o-mini"
+        # self.model = "gpt-4o"
         self.notifications = []
         self.current_task = None
         
@@ -69,12 +70,16 @@ class Agent:
         self.tool_box.add_tool(GetLatestEmail())
         self.tool_box.add_tool(ListEmails())
         self.tool_box.add_tool(ViewPdfAttachment())
+        self.tool_box.add_tool(ViewPdfFile())
         self.tool_box.add_tool(SaveEmailAttachment())
+        self.tool_box.add_tool(BexioListAccounts())
         self.tool_box.add_tool(BexioGetContacts())
         self.tool_box.add_tool(BexioCreateContact())
         # self.tool_box.add_tool(BexioCreateInvoicePayable())
         # self.tool_box.add_tool(BexioUploadEmailAttachment())
         self.tool_box.add_tool(BexioUploadFile())
+        self.tool_box.add_tool(BexioCreateInvoicePayable())
+        
         self.tools_schema = []
         for tool in self.tool_box.get_tools():
             schema = self._to_function_schema(tool)
