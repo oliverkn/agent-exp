@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
-import type { Timeout } from 'node';
 import DOMPurify from 'dompurify';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -23,6 +22,45 @@ interface Message {
   tool_result?: string;
   tool_args?: string;
 }
+
+const ToolGroupMessage = ({ messages, allMessages }: { messages: Message[], allMessages: Message[] }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const latestMessage = messages[messages.length - 1];
+  
+  // Only check if the latest message in the entire conversation has await_input
+  const hasAwaitInputAfter = allMessages.length > 0 && 
+    allMessages[allMessages.length - 1].agent_state === 'await_input';
+
+  return (
+    <div className="space-y-2">
+      <div className="min-w-0">
+        <div className="font-medium flex justify-between items-center">
+          <span>Took {messages.length} actions</span>
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-sm text-gray-400 hover:text-gray-600"
+          >
+            {isExpanded ? 'Hide details' : 'Show details'}
+          </button>
+        </div>
+        {!isExpanded ? (
+          !hasAwaitInputAfter ? (
+            <div className="mt-2">
+              <div className="font-medium text-gray-700">{latestMessage.tool_name}</div>
+              <div className="mt-1 text-gray-600" dangerouslySetInnerHTML={{ __html: latestMessage.content || '' }} />
+            </div>
+          ) : null
+        ) : (
+          <div className="mt-4 space-y-4">
+            {messages.map((message, index) => (
+              <ToolMessage key={index} message={message} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const ToolMessage = ({ message }: { message: Message }) => {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -312,16 +350,16 @@ export default function Agents() {
     messages[messages.length - 1].agent_state === 'await_input';
 
   const renderMessage = (message: Message) => {
-    // Skip messages that are empty or tool calls
+    // Skip messages that are empty, tool calls, or tool messages
     if (!message.content || 
         (message.role === 'assistant' && message.tool_call_id) || 
+        message.role === 'tool' ||
         message.role === 'developer') {
       return null;
     }
 
     const messageClasses = {
       assistant: 'bg-white text-gray-900',
-      tool: 'bg-white text-gray-900',
       user: 'bg-white text-gray-900 whitespace-pre-wrap',
     };
 
@@ -375,7 +413,11 @@ export default function Agents() {
                 td: ({children}) => (
                   <td className="border border-gray-300 px-4 py-2">{children}</td>
                 ),
-                code: ({node, inline, className, children, ...props}) => {
+                code: ({inline, className, children, ...props}: {
+                  inline?: boolean;
+                  className?: string;
+                  children: React.ReactNode;
+                }) => {
                   const match = /language-(\w+)/.exec(className || '');
                   return !inline ? (
                     <pre className="bg-gray-800 text-white p-4 rounded-lg">
@@ -410,15 +452,9 @@ export default function Agents() {
     if (!content) return null;
 
     return (
-      <div className={`p-4 rounded-lg ${messageClasses[message.role]} max-w-full`}>
-        {message.role === 'tool' ? (
-          <ToolMessage message={message} />
-        ) : (
-          <>
-            {content}
-          </>
-        )}
-      </div>
+      <>
+        {content}
+      </>
     );
   };
 
@@ -541,31 +577,94 @@ export default function Agents() {
           )}
           {selectedThread ? (
             <div className="space-y-4 max-w-3xl mx-auto pb-24">
-              {messages.map((message, index) => {
-                const messageContent = renderMessage(message);
-                if (!messageContent) return null;
-                
-                return (
-                  <div key={index} className="transition-all w-full flex flex-col">
-                    <div className="flex justify-start mb-2">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-medium text-base ${
-                        message.role === 'assistant' 
-                          ? 'bg-purple-100 text-purple-700'
-                          : message.role === 'user'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-emerald-100 text-emerald-700'
-                      }`}>
-                        {message.role === 'assistant' ? 'A' : message.role === 'user' ? 'U' : 'T'}
+              {(() => {
+                const messageGroups: (Message | Message[])[] = [];
+                let currentToolGroup: Message[] = [];
+
+                console.log('Starting message grouping. Total messages:', messages.length);
+
+                messages.forEach((message, index) => {
+                  console.log(`Processing message ${index}:`, {
+                    role: message.role,
+                    content: message.content?.slice(0, 50),
+                    tool_name: message.tool_name,
+                    has_content: !!message.content
+                  });
+
+                  if (message.role === 'tool') {
+                    console.log(`Adding message ${index} to tool group`);
+                    currentToolGroup.push(message);
+                  } else if (message.role === 'assistant' && !message.content) {
+                    // Skip empty assistant messages (they're usually just tool call markers)
+                    console.log(`Skipping empty assistant message ${index}`);
+                  } else {
+                    // If we have tool messages collected and we hit a non-tool message with content,
+                    // add the tool group before adding this message
+                    if (currentToolGroup.length > 0) {
+                      console.log('Adding tool group to messageGroups:', currentToolGroup.length);
+                      messageGroups.push([...currentToolGroup]);
+                      currentToolGroup = [];
+                    }
+                    messageGroups.push(message);
+                  }
+                });
+
+                // Add any remaining tool group
+                if (currentToolGroup.length > 0) {
+                  console.log('Adding final tool group:', currentToolGroup.length);
+                  messageGroups.push([...currentToolGroup]);
+                }
+
+                console.log('Final message groups:', messageGroups.map(group => 
+                  Array.isArray(group) ? `Tool group (${group.length})` : group.role
+                ));
+
+                return messageGroups.map((group, groupIndex) => {
+                  if (Array.isArray(group)) {
+                    // This is a tool message group
+                    console.log(`Rendering tool group ${groupIndex} with ${group.length} messages`);
+                    return (
+                      <div key={`group-${groupIndex}`} className="transition-all w-full flex flex-col">
+                        <div className="flex justify-start mb-2">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-medium text-base bg-emerald-100 text-emerald-700">
+                            T
+                          </div>
+                        </div>
+                        <div className="w-full">
+                          <div className="bg-white rounded-xl px-4 py-3 w-full">
+                            <ToolGroupMessage messages={group} allMessages={messages} />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    <div className="w-full">
-                      <div className="bg-white rounded-xl px-4 py-3 w-full">
-                        {messageContent}
+                    );
+                  } else {
+                    // This is a single message
+                    const messageContent = renderMessage(group);
+                    if (!messageContent) return null;
+
+                    return (
+                      <div key={`message-${group.id}`} className="transition-all w-full flex flex-col">
+                        <div className="flex justify-start mb-2">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-medium text-base ${
+                            group.role === 'assistant' 
+                              ? 'bg-purple-100 text-purple-700'
+                              : group.role === 'user'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            {group.role === 'assistant' ? 'A' : group.role === 'user' ? 'U' : 'T'}
+                          </div>
+                        </div>
+                        <div className="w-full">
+                          <div className="bg-white rounded-xl px-4 py-3 w-full">
+                            {messageContent}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  }
+                });
+              })()}
               <div ref={messagesEndRef} />
             </div>
           ) : (
