@@ -23,6 +23,281 @@ interface Message {
   tool_args?: string;
 }
 
+interface NonUserMessageGroupProps {
+  group: Message[];
+  renderMessage: (message: Message) => React.ReactNode;
+}
+
+const NonUserMessageGroup: React.FC<NonUserMessageGroupProps> = ({ group, renderMessage }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [expandedMessageId, setExpandedMessageId] = useState<number | null>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  
+  // Get the final message and its state
+  const finalMessage = group[group.length - 1];
+  const isAwaitingInput = finalMessage?.agent_state === 'await_input';
+  
+  const renderContent = (message: Message) => {
+    if (!message.content) return null;
+
+    if (message.content_type === 'image_url_list') {
+      try {
+        const imageUrls = JSON.parse(message.content);
+        return (
+          <>
+            <div className="mt-2 overflow-x-auto">
+              <div className="flex space-x-4 pb-2">
+                {imageUrls.map((url: string, index: number) => (
+                  <div key={index} className="relative cursor-pointer flex-shrink-0 w-48 h-48">
+                    <img 
+                      src={url} 
+                      alt={`Image ${index + 1}`}
+                      className="w-full h-full object-contain rounded-md hover:opacity-90 transition-opacity border border-gray-200"
+                      loading="lazy"
+                      onClick={() => setSelectedImage(url)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            {selectedImage && (
+              <div 
+                className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+                onClick={() => setSelectedImage(null)}
+              >
+                <img 
+                  src={selectedImage} 
+                  alt="Full size"
+                  className="max-w-full max-h-full object-contain"
+                />
+              </div>
+            )}
+          </>
+        );
+      } catch (e) {
+        console.error('Error parsing image URLs:', e);
+        return <div className="text-red-500">Error displaying images</div>;
+      }
+    }
+
+    // For non-image content, use DOMPurify
+    const sanitizedContent = DOMPurify.sanitize(message.content, {
+      ADD_ATTR: ['target', 'rel'],
+    });
+
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = sanitizedContent;
+    tempDiv.querySelectorAll('a').forEach(link => {
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener noreferrer');
+    });
+
+    return (
+      <div 
+        className="text-sm text-gray-600"
+        dangerouslySetInnerHTML={{ __html: tempDiv.innerHTML }}
+      />
+    );
+  };
+  
+  // For Phase 1 (await_tool_response or await_ai_response)
+  if (!isAwaitingInput) {
+    const toolMessages = group.filter(msg => msg.role === 'tool');
+    const toolCount = toolMessages.length;
+    const latestTool = toolMessages[toolMessages.length - 1];
+    const isThinking = !latestTool;
+    const previousToolCount = toolMessages.slice(0, -1).length;
+    
+    return (
+      <div className="transition-all w-full flex flex-col">
+        <div className="w-full">
+          <div className="bg-white rounded-xl overflow-hidden">
+            <div className="bg-gray-100 px-4 py-3">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-600">Performed {previousToolCount} {previousToolCount === 1 ? 'action' : 'actions'}</span>
+                  <button
+                    onClick={() => setIsExpanded(!isExpanded)}
+                    className="text-gray-500 hover:text-gray-700 font-medium"
+                  >
+                    {isExpanded ? 'Hide details' : 'Show all'}
+                  </button>
+                </div>
+                {isExpanded && (
+                  <div className="mt-2 space-y-2">
+                    {toolMessages.slice(0, -1).map((msg, idx) => (
+                      <div key={`tool-${idx}`}>
+                        <button
+                          onClick={() => setExpandedMessageId(expandedMessageId === msg.id ? null : msg.id)}
+                          className="text-sm text-gray-700 hover:text-gray-900 cursor-pointer w-full text-left flex items-center"
+                        >
+                          <span className="flex-1">{msg.tool_name}</span>
+                          <svg 
+                            className={`w-4 h-4 transform transition-transform ${expandedMessageId === msg.id ? 'rotate-180' : ''}`} 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {expandedMessageId === msg.id && (
+                          <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                            {renderContent(msg)}
+                            {msg.tool_args && (
+                              <div className="mt-2">
+                                <div className="text-xs font-medium text-gray-500">Arguments:</div>
+                                <div className="mt-1 text-sm font-mono bg-gray-50 rounded p-2 whitespace-pre-wrap">
+                                  {msg.tool_args}
+                                </div>
+                              </div>
+                            )}
+                            {msg.tool_result && (
+                              <div className="mt-2">
+                                <div className="text-xs font-medium text-gray-500">Result:</div>
+                                <div className="mt-1 text-sm font-mono bg-gray-50 rounded p-2 whitespace-pre-wrap">
+                                  {msg.tool_result}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="h-px bg-gray-200 mt-3" />
+                <div>
+                  <button
+                    onClick={() => setExpandedMessageId(expandedMessageId === latestTool?.id ? null : latestTool?.id)}
+                    className="w-full text-left mt-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-gray-700">
+                        {isThinking ? 'Thinking...' : latestTool.tool_name}
+                      </div>
+                      <svg 
+                        className={`w-4 h-4 transform transition-transform ${expandedMessageId === latestTool?.id ? 'rotate-180' : ''}`} 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </button>
+                  {!isThinking && (
+                    <>
+                      {renderContent(latestTool)}
+                      {expandedMessageId === latestTool.id && (
+                        <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                          {latestTool.tool_args && (
+                            <div className="mt-2">
+                              <div className="text-xs font-medium text-gray-500">Arguments:</div>
+                              <div className="mt-1 text-sm font-mono bg-gray-50 rounded p-2 whitespace-pre-wrap">
+                                {latestTool.tool_args}
+                              </div>
+                            </div>
+                          )}
+                          {latestTool.tool_result && (
+                            <div className="mt-2">
+                              <div className="text-xs font-medium text-gray-500">Result:</div>
+                              <div className="mt-1 text-sm font-mono bg-gray-50 rounded p-2 whitespace-pre-wrap">
+                                {latestTool.tool_result}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  // For Phase 2 (await_input)
+  const toolMessages = group.filter(msg => msg.role === 'tool');
+  const toolCount = toolMessages.length;
+  
+  return (
+    <div className="transition-all w-full flex flex-col">
+      <div className="w-full">
+        <div className="bg-white rounded-xl overflow-hidden">
+          {toolCount > 0 && (
+            <div className="bg-gray-100 px-4 py-3">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-600">Performed {toolCount} {toolCount === 1 ? 'action' : 'actions'}</span>
+                  <button
+                    onClick={() => setIsExpanded(!isExpanded)}
+                    className="text-gray-500 hover:text-gray-700 font-medium"
+                  >
+                    {isExpanded ? 'Hide details' : 'Show all'}
+                  </button>
+                </div>
+                {isExpanded && (
+                  <div className="mt-2 space-y-2">
+                    {toolMessages.map((msg, idx) => {
+                      const isMessageExpanded = expandedMessageId === msg.id;
+                      return (
+                        <div key={`tool-${idx}`}>
+                          <button
+                            onClick={() => setExpandedMessageId(isMessageExpanded ? null : msg.id)}
+                            className="text-sm text-gray-700 hover:text-gray-900 cursor-pointer w-full text-left flex items-center"
+                          >
+                            <span className="flex-1">{msg.tool_name}</span>
+                            <svg 
+                              className={`w-4 h-4 transform transition-transform ${isMessageExpanded ? 'rotate-180' : ''}`} 
+                              fill="none" 
+                              stroke="currentColor" 
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
+                          {isMessageExpanded && (
+                            <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                              {renderContent(msg)}
+                              {msg.tool_args && (
+                                <div className="mt-2">
+                                  <div className="text-xs font-medium text-gray-500">Arguments:</div>
+                                  <div className="mt-1 text-sm font-mono bg-gray-50 rounded p-2 whitespace-pre-wrap">
+                                    {msg.tool_args}
+                                  </div>
+                                </div>
+                              )}
+                              {msg.tool_result && (
+                                <div className="mt-2">
+                                  <div className="text-xs font-medium text-gray-500">Result:</div>
+                                  <div className="mt-1 text-sm font-mono bg-gray-50 rounded p-2 whitespace-pre-wrap">
+                                    {msg.tool_result}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="px-4 py-3">
+            {renderMessage(finalMessage)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ToolGroupMessage = ({ messages, allMessages }: { messages: Message[], allMessages: Message[] }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const latestMessage = messages[messages.length - 1];
@@ -51,9 +326,11 @@ const ToolGroupMessage = ({ messages, allMessages }: { messages: Message[], allM
             </div>
           ) : null
         ) : (
-          <div className="mt-3 space-y-3">
+          <div className="mt-3 space-y-2">
             {messages.map((message, index) => (
-              <ToolMessage key={index} message={message} />
+              <div key={index} className="text-sm text-gray-600">
+                {message.tool_name}
+              </div>
             ))}
           </div>
         )}
@@ -75,18 +352,20 @@ const ToolMessage = ({ message }: { message: Message }) => {
         const imageUrls = JSON.parse(message.content);
         return (
           <>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {imageUrls.map((url: string, index: number) => (
-                <div key={index} className="relative cursor-pointer flex items-center justify-start h-48">
-                  <img 
-                    src={url} 
-                    alt={`PDF page ${index + 1}`}
-                    className="max-h-full object-scale-down rounded-md hover:opacity-90 transition-opacity border border-gray-200"
-                    loading="lazy"
-                    onClick={() => setSelectedImage(url)}
-                  />
-                </div>
-              ))}
+            <div className="mt-2 overflow-x-auto">
+              <div className="flex space-x-4 pb-2">
+                {imageUrls.map((url: string, index: number) => (
+                  <div key={index} className="relative cursor-pointer flex-shrink-0 w-48 h-48">
+                    <img 
+                      src={url} 
+                      alt={`PDF page ${index + 1}`}
+                      className="w-full h-full object-contain rounded-md hover:opacity-90 transition-opacity border border-gray-200"
+                      loading="lazy"
+                      onClick={() => setSelectedImage(url)}
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
             {selectedImage && (
               <div 
@@ -109,8 +388,24 @@ const ToolMessage = ({ message }: { message: Message }) => {
     }
 
     // Default content rendering
+    const sanitizedContent = DOMPurify.sanitize(message.content, {
+      ADD_ATTR: ['target', 'rel'],
+    });
+
+    // Add target="_blank" to all links
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = sanitizedContent;
+    tempDiv.querySelectorAll('a').forEach(link => {
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener noreferrer');
+    });
+
     return (
-      <div className="mt-1 text-sm" dangerouslySetInnerHTML={{ __html: message.content }} />
+      <div 
+        className="break-words overflow-hidden overflow-wrap-anywhere"
+        style={{ wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}
+        dangerouslySetInnerHTML={{ __html: tempDiv.innerHTML }}
+      />
     );
   };
 
@@ -396,7 +691,7 @@ export default function Agents() {
       // For assistant messages, use ReactMarkdown with GFM support
       if (message.role === 'assistant') {
         return (
-          <div className="prose prose-blue max-w-none prose-pre:bg-gray-800 prose-pre:text-white prose-pre:p-4 prose-pre:rounded-lg">
+          <div className="prose prose-blue max-w-none prose-pre:bg-gray-50 prose-pre:text-gray-800 prose-pre:p-4 prose-pre:rounded-lg">
             <ReactMarkdown 
               children={message.content}
               remarkPlugins={[remarkGfm]}
@@ -420,7 +715,7 @@ export default function Agents() {
                 }) => {
                   const match = /language-(\w+)/.exec(className || '');
                   return !inline ? (
-                    <pre className="bg-gray-800 text-white p-4 rounded-lg">
+                    <pre className="bg-gray-50 text-gray-800 p-4 rounded-lg border border-gray-200">
                       <code className={className} {...props}>
                         {children}
                       </code>
@@ -438,12 +733,23 @@ export default function Agents() {
       }
 
       // For other message types, keep the existing sanitized HTML rendering
-      const sanitizedContent = DOMPurify.sanitize(message.content);
+      const sanitizedContent = DOMPurify.sanitize(message.content, {
+        ADD_ATTR: ['target', 'rel'],
+      });
+
+      // Add target="_blank" to all links
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = sanitizedContent;
+      tempDiv.querySelectorAll('a').forEach(link => {
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+      });
+
       return (
         <div 
           className="break-words overflow-hidden overflow-wrap-anywhere"
           style={{ wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}
-          dangerouslySetInnerHTML={{ __html: sanitizedContent }}
+          dangerouslySetInnerHTML={{ __html: tempDiv.innerHTML }}
         />
       );
     };
@@ -579,110 +885,57 @@ export default function Agents() {
             <div className="space-y-4 max-w-3xl mx-auto pb-24">
               {(() => {
                 const messageGroups: (Message | Message[])[] = [];
-                let currentToolGroup: Message[] = [];
-
-                console.log('Starting message grouping. Total messages:', messages.length);
+                let currentNonUserGroup: Message[] = [];
 
                 messages.forEach((message, index) => {
-                  console.log(`Processing message ${index}:`, {
-                    role: message.role,
-                    content: message.content?.slice(0, 50),
-                    tool_name: message.tool_name,
-                    has_content: !!message.content
-                  });
-
-                  if (message.role === 'tool') {
-                    console.log(`Adding message ${index} to tool group`);
-                    currentToolGroup.push(message);
-                  } else if (message.role === 'assistant' && !message.content) {
-                    // Skip empty assistant messages (they're usually just tool call markers)
-                    console.log(`Skipping empty assistant message ${index}`);
-                  } else {
-                    // If we have tool messages collected and we hit a non-tool message with content,
-                    // add the tool group before adding this message
-                    if (currentToolGroup.length > 0) {
-                      console.log('Adding tool group to messageGroups:', currentToolGroup.length);
-                      messageGroups.push([...currentToolGroup]);
-                      currentToolGroup = [];
+                  if (message.role === 'user') {
+                    // If we have collected any non-user messages, add them as a group
+                    if (currentNonUserGroup.length > 0) {
+                      messageGroups.push([...currentNonUserGroup]);
+                      currentNonUserGroup = [];
                     }
+                    // Add the user message
                     messageGroups.push(message);
+                  } else {
+                    // Collect all non-user messages (tool and assistant) into a group
+                    if (message.role === 'assistant' && message.content) {
+                      currentNonUserGroup.push(message);
+                    } else if (message.role === 'tool') {
+                      currentNonUserGroup.push(message);
+                    }
                   }
                 });
 
-                // Add any remaining tool group
-                if (currentToolGroup.length > 0) {
-                  console.log('Adding final tool group:', currentToolGroup.length);
-                  messageGroups.push([...currentToolGroup]);
+                // Add any remaining non-user messages
+                if (currentNonUserGroup.length > 0) {
+                  messageGroups.push([...currentNonUserGroup]);
                 }
 
-                console.log('Final message groups:', messageGroups.map(group => 
-                  Array.isArray(group) ? `Tool group (${group.length})` : group.role
-                ));
-
                 return messageGroups.map((group, groupIndex) => {
-                  // Check if this is a tool group and the next message is an assistant message
-                  const nextGroup = messageGroups[groupIndex + 1];
-                  const isToolGroupWithAssistant = Array.isArray(group) && 
-                    nextGroup && 
-                    !Array.isArray(nextGroup) && 
-                    nextGroup.role === 'assistant';
-
                   if (Array.isArray(group)) {
-                    // Skip if this tool group will be rendered with the next assistant message
-                    if (isToolGroupWithAssistant) {
-                      return null;
-                    }
-
-                    // This is a standalone tool message group
                     return (
-                      <div key={`group-${groupIndex}`} className="transition-all w-full flex flex-col">
-                        <div className="w-full">
-                          <div className="bg-white rounded-xl px-4 py-3 w-full">
-                            <ToolGroupMessage messages={group} allMessages={messages} />
-                          </div>
-                        </div>
-                      </div>
+                      <NonUserMessageGroup 
+                        key={`group-${groupIndex}`}
+                        group={group}
+                        renderMessage={renderMessage}
+                      />
                     );
                   } else {
-                    // This is a single message
+                    // This is a user message
                     const messageContent = renderMessage(group);
                     if (!messageContent) return null;
 
-                    // Check if previous group was a tool group that should be combined
-                    const prevGroup = messageGroups[groupIndex - 1];
-                    const isPrevToolGroup = Array.isArray(prevGroup) && group.role === 'assistant';
-
-                    if (isPrevToolGroup) {
-                      return (
-                        <div key={`message-${group.id}`} className="transition-all w-full flex flex-col">
-                          <div className="w-full">
-                            <div className="bg-white rounded-xl overflow-hidden">
-                              <div className="bg-gray-100 px-4 py-3">
-                                <ToolGroupMessage messages={prevGroup} allMessages={messages} />
-                              </div>
-                              <div className="px-4 py-3">
-                                {messageContent}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    // Regular user or standalone assistant message
                     return (
                       <div key={`message-${group.id}`} className="transition-all w-full flex flex-col">
-                        <div className={`w-full flex ${group.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`rounded-xl px-4 py-3 ${
-                            group.role === 'user' ? 'bg-[#333] text-white w-1/2' : 'bg-white w-full'
-                          }`}>
+                        <div className="w-full flex justify-end">
+                          <div className="rounded-xl px-4 py-3 bg-[#333] text-white w-1/2">
                             {messageContent}
                           </div>
                         </div>
                       </div>
                     );
                   }
-                }).filter(Boolean);
+                });
               })()}
               <div ref={messagesEndRef} />
             </div>
