@@ -37,13 +37,13 @@ const ToolMessage = ({ message }: { message: Message }) => {
         const imageUrls = JSON.parse(message.content);
         return (
           <>
-            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            <div className="mt-4 grid grid-cols-2 gap-4">
               {imageUrls.map((url: string, index: number) => (
-                <div key={index} className="relative cursor-pointer">
+                <div key={index} className="relative cursor-pointer flex items-center justify-start h-64">
                   <img 
                     src={url} 
                     alt={`PDF page ${index + 1}`}
-                    className="w-32 h-32 object-contain rounded-lg shadow-md hover:shadow-lg transition-shadow"
+                    className="max-h-full object-scale-down rounded-lg hover:shadow-lg transition-shadow border border-gray-200"
                     loading="lazy"
                     onClick={() => setSelectedImage(url)}
                   />
@@ -78,37 +78,39 @@ const ToolMessage = ({ message }: { message: Message }) => {
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-2">
+      <div className="min-w-0">
+        <div className="font-medium">
+          {message.tool_name || 'Tool'}
+        </div>
+        <div className="whitespace-pre-wrap break-all">
+          {renderToolContent()}
+        </div>
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="text-sm text-gray-600 hover:text-gray-800 flex-shrink-0"
+          className="text-sm text-gray-400 hover:text-gray-600 mt-2"
         >
-          {isExpanded ? '▼' : '▶'}
+          {isExpanded ? 'Hide details' : 'Show details'}
         </button>
-        <div className="min-w-0 flex-1">
-          <div className="font-medium">
-            {message.tool_name || 'Tool'}
-          </div>
-          <div className="whitespace-pre-wrap break-all">
-            {renderToolContent()}
-          </div>
-        </div>
       </div>
 
       {isExpanded && (
-        <div className="ml-6 mt-2 space-y-2">
+        <div className="mt-4 space-y-3">
           {message.tool_args && (
-            <div className="p-2 bg-green-50 rounded">
-              <span className="font-medium">Args: </span>
-              <div className="whitespace-pre-wrap break-all">
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <span className="font-medium text-gray-700">Args:</span>
+              </div>
+              <div className="p-4 bg-white font-mono text-sm text-gray-800 whitespace-pre-wrap break-all">
                 {message.tool_args}
               </div>
             </div>
           )}
           {message.tool_result && (
-            <div className="p-2 bg-green-50 rounded">
-              <span className="font-medium">Result: </span>
-              <div className="whitespace-pre-wrap break-all">
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <span className="font-medium text-gray-700">Result:</span>
+              </div>
+              <div className="p-4 bg-white font-mono text-sm text-gray-800 whitespace-pre-wrap break-all">
                 {message.tool_result}
               </div>
             </div>
@@ -310,17 +312,17 @@ export default function Agents() {
     messages[messages.length - 1].agent_state === 'await_input';
 
   const renderMessage = (message: Message) => {
-    // Skip assistant messages that are tool calls or have no content
-    if ((message.role === 'assistant' && message.tool_call_id) || 
-        (message.role === 'assistant' && !message.content) ||
-        message.role === 'developer') {  // Skip developer messages
+    // Skip messages that are empty or tool calls
+    if (!message.content || 
+        (message.role === 'assistant' && message.tool_call_id) || 
+        message.role === 'developer') {
       return null;
     }
 
     const messageClasses = {
-      assistant: 'bg-blue-50 text-blue-800',
-      tool: 'bg-green-50 text-green-800',
-      user: 'bg-gray-50 text-gray-800 whitespace-pre-wrap',
+      assistant: 'bg-white text-gray-900',
+      tool: 'bg-white text-gray-900',
+      user: 'bg-white text-gray-900 whitespace-pre-wrap',
     };
 
     const renderContent = () => {
@@ -329,6 +331,7 @@ export default function Agents() {
       if (message.content_type === 'image_url_list') {
         try {
           const imageUrls = JSON.parse(message.content);
+          if (!imageUrls || imageUrls.length === 0) return null;
           return (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
@@ -337,7 +340,7 @@ export default function Agents() {
                     <img 
                       src={url} 
                       alt={`Generated image ${index + 1}`}
-                      className="w-32 h-32 object-contain rounded-lg shadow-md hover:shadow-lg transition-shadow"
+                      className="w-32 h-32 object-contain rounded-lg hover:shadow-lg transition-shadow border border-gray-200"
                       loading="lazy"
                       onClick={() => setSelectedImage(url)}
                     />
@@ -348,7 +351,7 @@ export default function Agents() {
           );
         } catch (e) {
           console.error('Error parsing image URLs:', e);
-          return <div className="text-red-500">Error displaying images</div>;
+          return null;
         }
       }
 
@@ -396,21 +399,23 @@ export default function Agents() {
       const sanitizedContent = DOMPurify.sanitize(message.content);
       return (
         <div 
-          className="mt-2 break-words overflow-hidden overflow-wrap-anywhere"
+          className="break-words overflow-hidden overflow-wrap-anywhere"
           style={{ wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}
           dangerouslySetInnerHTML={{ __html: sanitizedContent }}
         />
       );
     };
 
+    const content = renderContent();
+    if (!content) return null;
+
     return (
-      <div className={`p-4 rounded-lg mb-4 ${messageClasses[message.role]} max-w-full`}>
+      <div className={`p-4 rounded-lg ${messageClasses[message.role]} max-w-full`}>
         {message.role === 'tool' ? (
           <ToolMessage message={message} />
         ) : (
           <>
-            <div className="font-medium capitalize">{message.role}</div>
-            {renderContent()}
+            {content}
           </>
         )}
       </div>
@@ -478,83 +483,110 @@ export default function Agents() {
     }
   };
 
-  const renderThreadList = () => (
-    <div className="space-y-2 overflow-y-auto">
-      {threads.map((thread) => (
-        <div
-          key={thread.id}
-          onClick={() => handleThreadSelect(thread)}
-          className={`p-3 rounded-md cursor-pointer ${
-            selectedThread?.id === thread.id
-              ? 'bg-blue-100'
-              : 'hover:bg-gray-100'
-          }`}
-        >
-          <h3 className="font-medium">{thread.title}</h3>
-          <p className="text-sm text-gray-500">
-            {new Date(thread.created_at).toLocaleDateString()}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
-
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-white">
       {/* Thread List Panel */}
-      <div className="w-1/4 bg-white border-r border-gray-200 p-4 flex flex-col">
-        <div className="mb-4">
+      <div className="w-80 bg-white shadow-lg p-6 flex flex-col space-y-6 overflow-hidden">
+        <div className="flex flex-col space-y-4">
           <input
             type="text"
             value={newThreadTitle}
             onChange={(e) => setNewThreadTitle(e.target.value)}
             placeholder="New Thread Title"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md mb-2"
+            className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
           />
           <button
             onClick={createThread}
             disabled={isLoading}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium"
           >
             {isLoading ? 'Creating...' : 'Create Thread'}
           </button>
-          {error && <div className="text-red-500 text-sm mt-2">{error}</div>}
+          {error && <div className="text-gray-700 text-sm px-2">{error}</div>}
         </div>
 
-        {renderThreadList()}
+        <div className="flex-1 overflow-y-auto space-y-3 -mr-4 pr-4">
+          {threads.map((thread) => (
+            <div
+              key={thread.id}
+              onClick={() => handleThreadSelect(thread)}
+              className={`p-4 rounded-lg cursor-pointer transition-all ${
+                selectedThread?.id === thread.id
+                  ? 'border-2 border-gray-300'
+                  : 'hover:bg-gray-50 border border-gray-200'
+              }`}
+            >
+              <h3 className="font-medium text-gray-900 mb-1 truncate">{thread.title}</h3>
+              <p className="text-sm text-gray-500">
+                {new Date(thread.created_at).toLocaleDateString()}
+              </p>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Messages Panel */}
       <div className="flex-1 flex flex-col">
-        <div className="flex-1 overflow-y-auto p-4">
+        {selectedThread && (
+          <div className="px-8 py-4 bg-white shadow-sm border-b border-gray-100">
+            <h2 className="text-xl font-semibold text-gray-900">{selectedThread.title}</h2>
+          </div>
+        )}
+        
+        <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
           {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+            <div className="border border-gray-200 text-gray-700 px-4 py-3 rounded-lg mb-4">
               {error}
             </div>
           )}
           {selectedThread ? (
-            <div className="space-y-4">
-              {messages.map((message, index) => (
-                message && <div key={index}>{renderMessage(message)}</div>
-              ))}
+            <div className="space-y-4 max-w-3xl mx-auto pb-24">
+              {messages.map((message, index) => {
+                const messageContent = renderMessage(message);
+                if (!messageContent) return null;
+                
+                return (
+                  <div key={index} className="transition-all w-full flex flex-col">
+                    <div className="flex justify-start mb-2">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-medium text-base ${
+                        message.role === 'assistant' 
+                          ? 'bg-purple-100 text-purple-700'
+                          : message.role === 'user'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {message.role === 'assistant' ? 'A' : message.role === 'user' ? 'U' : 'T'}
+                      </div>
+                    </div>
+                    <div className="w-full">
+                      <div className="bg-white rounded-xl px-4 py-3 w-full">
+                        {messageContent}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              Select a thread to view messages
+            <div className="flex flex-col items-center justify-center h-full text-gray-500 space-y-4">
+              <svg className="w-16 h-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <p className="text-lg font-medium">Select a thread to start chatting</p>
             </div>
           )}
           
           {/* Image Modal */}
           {selectedImage && (
             <div 
-              className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+              className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4 backdrop-blur-sm"
               onClick={() => setSelectedImage(null)}
             >
               <img 
                 src={selectedImage} 
                 alt="Full size"
-                className="max-w-full max-h-full object-contain"
+                className="max-w-full max-h-full object-contain rounded-lg"
               />
             </div>
           )}
@@ -562,28 +594,32 @@ export default function Agents() {
 
         {/* Message Input */}
         {selectedThread && (
-          <div className="p-4 border-t border-gray-200 bg-white">
-            <div className="flex space-x-4">
-              <textarea
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                disabled={!isAwaitingInput}
-                placeholder={isAwaitingInput ? "Type your message..." : "Waiting for AI..."}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 resize-none h-[40px] min-h-[40px] max-h-[200px] overflow-y-hidden"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-              />
-              <button
-                onClick={sendMessage}
-                disabled={!isAwaitingInput || !newMessage.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                Send
-              </button>
+          <div className="fixed bottom-6 left-[calc(320px+1.5rem)] right-6">
+            <div className="max-w-3xl mx-auto px-0">
+              <div className="flex space-x-4 bg-gray-900 rounded-xl p-4">
+                <textarea
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  disabled={!isAwaitingInput}
+                  placeholder={isAwaitingInput ? "Type your message..." : "Waiting for AI..."}
+                  className="flex-1 px-4 py-3 bg-gray-900 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-gray-100 placeholder-gray-400 disabled:bg-gray-800 disabled:text-gray-500 resize-none h-[48px] min-h-[48px] max-h-[200px] overflow-y-hidden"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                />
+                <button
+                  onClick={sendMessage}
+                  disabled={!isAwaitingInput || !newMessage.trim()}
+                  className="w-12 h-12 bg-[#ddd] text-gray-500 rounded-full hover:bg-gray-200 disabled:opacity-50 transition-colors flex items-center justify-center flex-shrink-0"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         )}

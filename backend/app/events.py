@@ -22,7 +22,8 @@ def setup_db_events(db):
                 "created_at": str(message.created_at),
                 "tool_name": message.tool_name if message.tool_name is not None else None,
                 "tool_call_id": message.tool_call_id if message.tool_call_id is not None else None,
-                "tool_result": message.tool_result if message.tool_result is not None else None
+                "tool_result": message.tool_result if message.tool_result is not None else None,
+                "tool_args": message.tool_args if message.tool_args is not None else None
             }
             
             # Remove None values to ensure clean JSON
