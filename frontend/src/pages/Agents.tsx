@@ -34,11 +34,11 @@ const ToolGroupMessage = ({ messages, allMessages }: { messages: Message[], allM
   return (
     <div className="space-y-2">
       <div className="min-w-0">
-        <div className="font-medium flex justify-between items-center">
-          <span>Took {messages.length} actions</span>
+        <div className="flex justify-between items-center text-sm">
+          <span className="text-gray-600">Performed {messages.length} {messages.length === 1 ? 'action' : 'actions'}</span>
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="text-sm text-gray-400 hover:text-gray-600"
+            className="text-gray-500 hover:text-gray-700 font-medium"
           >
             {isExpanded ? 'Hide details' : 'Show details'}
           </button>
@@ -46,12 +46,12 @@ const ToolGroupMessage = ({ messages, allMessages }: { messages: Message[], allM
         {!isExpanded ? (
           !hasAwaitInputAfter ? (
             <div className="mt-2">
-              <div className="font-medium text-gray-700">{latestMessage.tool_name}</div>
-              <div className="mt-1 text-gray-600" dangerouslySetInnerHTML={{ __html: latestMessage.content || '' }} />
+              <div className="text-sm text-gray-700">{latestMessage.tool_name}</div>
+              <div className="mt-1 text-sm text-gray-600" dangerouslySetInnerHTML={{ __html: latestMessage.content || '' }} />
             </div>
           ) : null
         ) : (
-          <div className="mt-4 space-y-4">
+          <div className="mt-3 space-y-3">
             {messages.map((message, index) => (
               <ToolMessage key={index} message={message} />
             ))}
@@ -75,13 +75,13 @@ const ToolMessage = ({ message }: { message: Message }) => {
         const imageUrls = JSON.parse(message.content);
         return (
           <>
-            <div className="mt-4 grid grid-cols-2 gap-4">
+            <div className="mt-2 grid grid-cols-2 gap-2">
               {imageUrls.map((url: string, index: number) => (
-                <div key={index} className="relative cursor-pointer flex items-center justify-start h-64">
+                <div key={index} className="relative cursor-pointer flex items-center justify-start h-48">
                   <img 
                     src={url} 
                     alt={`PDF page ${index + 1}`}
-                    className="max-h-full object-scale-down rounded-lg hover:shadow-lg transition-shadow border border-gray-200"
+                    className="max-h-full object-scale-down rounded-md hover:opacity-90 transition-opacity border border-gray-200"
                     loading="lazy"
                     onClick={() => setSelectedImage(url)}
                   />
@@ -110,14 +110,14 @@ const ToolMessage = ({ message }: { message: Message }) => {
 
     // Default content rendering
     return (
-      <div className="mt-1" dangerouslySetInnerHTML={{ __html: message.content }} />
+      <div className="mt-1 text-sm" dangerouslySetInnerHTML={{ __html: message.content }} />
     );
   };
 
   return (
     <div className="space-y-2">
       <div className="min-w-0">
-        <div className="font-medium">
+        <div className="text-sm font-medium text-gray-700">
           {message.tool_name || 'Tool'}
         </div>
         <div className="whitespace-pre-wrap break-all">
@@ -125,30 +125,30 @@ const ToolMessage = ({ message }: { message: Message }) => {
         </div>
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="text-sm text-gray-400 hover:text-gray-600 mt-2"
+          className="text-sm text-gray-500 hover:text-gray-700 mt-2 font-medium"
         >
           {isExpanded ? 'Hide details' : 'Show details'}
         </button>
       </div>
 
       {isExpanded && (
-        <div className="mt-4 space-y-3">
+        <div className="mt-3 space-y-2">
           {message.tool_args && (
-            <div className="rounded-lg border border-gray-200 overflow-hidden">
-              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
-                <span className="font-medium text-gray-700">Args:</span>
+            <div className="rounded-md border border-gray-200 overflow-hidden">
+              <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+                <span className="text-xs font-medium text-gray-600">Args</span>
               </div>
-              <div className="p-4 bg-white font-mono text-sm text-gray-800 whitespace-pre-wrap break-all">
+              <div className="p-3 bg-white font-mono text-xs text-gray-700 whitespace-pre-wrap break-all">
                 {message.tool_args}
               </div>
             </div>
           )}
           {message.tool_result && (
-            <div className="rounded-lg border border-gray-200 overflow-hidden">
-              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
-                <span className="font-medium text-gray-700">Result:</span>
+            <div className="rounded-md border border-gray-200 overflow-hidden">
+              <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+                <span className="text-xs font-medium text-gray-600">Result</span>
               </div>
-              <div className="p-4 bg-white font-mono text-sm text-gray-800 whitespace-pre-wrap break-all">
+              <div className="p-3 bg-white font-mono text-xs text-gray-700 whitespace-pre-wrap break-all">
                 {message.tool_result}
               </div>
             </div>
@@ -620,16 +620,22 @@ export default function Agents() {
                 ));
 
                 return messageGroups.map((group, groupIndex) => {
+                  // Check if this is a tool group and the next message is an assistant message
+                  const nextGroup = messageGroups[groupIndex + 1];
+                  const isToolGroupWithAssistant = Array.isArray(group) && 
+                    nextGroup && 
+                    !Array.isArray(nextGroup) && 
+                    nextGroup.role === 'assistant';
+
                   if (Array.isArray(group)) {
-                    // This is a tool message group
-                    console.log(`Rendering tool group ${groupIndex} with ${group.length} messages`);
+                    // Skip if this tool group will be rendered with the next assistant message
+                    if (isToolGroupWithAssistant) {
+                      return null;
+                    }
+
+                    // This is a standalone tool message group
                     return (
                       <div key={`group-${groupIndex}`} className="transition-all w-full flex flex-col">
-                        <div className="flex justify-start mb-2">
-                          <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-medium text-base bg-emerald-100 text-emerald-700">
-                            T
-                          </div>
-                        </div>
                         <div className="w-full">
                           <div className="bg-white rounded-xl px-4 py-3 w-full">
                             <ToolGroupMessage messages={group} allMessages={messages} />
@@ -642,28 +648,41 @@ export default function Agents() {
                     const messageContent = renderMessage(group);
                     if (!messageContent) return null;
 
-                    return (
-                      <div key={`message-${group.id}`} className="transition-all w-full flex flex-col">
-                        <div className="flex justify-start mb-2">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-medium text-base ${
-                            group.role === 'assistant' 
-                              ? 'bg-purple-100 text-purple-700'
-                              : group.role === 'user'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-emerald-100 text-emerald-700'
-                          }`}>
-                            {group.role === 'assistant' ? 'A' : group.role === 'user' ? 'U' : 'T'}
+                    // Check if previous group was a tool group that should be combined
+                    const prevGroup = messageGroups[groupIndex - 1];
+                    const isPrevToolGroup = Array.isArray(prevGroup) && group.role === 'assistant';
+
+                    if (isPrevToolGroup) {
+                      return (
+                        <div key={`message-${group.id}`} className="transition-all w-full flex flex-col">
+                          <div className="w-full">
+                            <div className="bg-white rounded-xl overflow-hidden">
+                              <div className="bg-gray-100 px-4 py-3">
+                                <ToolGroupMessage messages={prevGroup} allMessages={messages} />
+                              </div>
+                              <div className="px-4 py-3">
+                                {messageContent}
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        <div className="w-full">
-                          <div className="bg-white rounded-xl px-4 py-3 w-full">
+                      );
+                    }
+
+                    // Regular user or standalone assistant message
+                    return (
+                      <div key={`message-${group.id}`} className="transition-all w-full flex flex-col">
+                        <div className={`w-full flex ${group.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`rounded-xl px-4 py-3 ${
+                            group.role === 'user' ? 'bg-[#333] text-white w-1/2' : 'bg-white w-full'
+                          }`}>
                             {messageContent}
                           </div>
                         </div>
                       </div>
                     );
                   }
-                });
+                }).filter(Boolean);
               })()}
               <div ref={messagesEndRef} />
             </div>
